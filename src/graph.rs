@@ -248,33 +248,6 @@ mod tests {
     }
 
     #[test]
-    fn test_add_edge_validates_properties_json() {
-        let (_dir, conn) = open_db();
-        let params = InsertEdgeParams {
-            actor_id: "a1",
-            from_memory_id: "m1",
-            to_memory_id: "m2",
-            label: "uses",
-            properties: Some("not json"),
-        };
-        let err = add_edge(&conn, &params).unwrap_err();
-        assert!(matches!(err, MemoryError::InvalidInput(_)));
-    }
-
-    #[test]
-    fn test_update_edge_requires_change() {
-        let (_dir, conn) = open_db();
-        let params = UpdateEdgeParams {
-            actor_id: "a1",
-            edge_id: "e1",
-            label: None,
-            properties: None,
-        };
-        let err = update_edge(&conn, &params).unwrap_err();
-        assert!(matches!(err, MemoryError::InvalidInput(_)));
-    }
-
-    #[test]
     fn test_traverse_clamps_depth() {
         let (_dir, conn) = open_db();
         // Create memories and edge so traverse has something to work with

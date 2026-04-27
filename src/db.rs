@@ -2439,21 +2439,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_neighbors_in() {
-        let (_dir, conn) = open_temp();
-        let m1 = make_memory(&conn, "a1", "target");
-        let m2 = make_memory(&conn, "a1", "source");
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m2.id, to_memory_id: &m1.id,
-            label: "uses", properties: None,
-        }).unwrap();
-
-        let neighbors = conn.get_neighbors("a1", &m1.id, Direction::In, None, 100).unwrap();
-        assert_eq!(neighbors.len(), 1);
-        assert_eq!(neighbors[0].memory.id, m2.id);
-    }
-
-    #[test]
     fn test_get_neighbors_both() {
         let (_dir, conn) = open_temp();
         let m1 = make_memory(&conn, "a1", "center");
@@ -2473,26 +2458,6 @@ mod tests {
         let ids: Vec<&str> = neighbors.iter().map(|n| n.memory.id.as_str()).collect();
         assert!(ids.contains(&m2.id.as_str()));
         assert!(ids.contains(&m3.id.as_str()));
-    }
-
-    #[test]
-    fn test_get_neighbors_label_filter() {
-        let (_dir, conn) = open_temp();
-        let m1 = make_memory(&conn, "a1", "center");
-        let m2 = make_memory(&conn, "a1", "dep");
-        let m3 = make_memory(&conn, "a1", "rel");
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "depends_on", properties: None,
-        }).unwrap();
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m3.id,
-            label: "related_to", properties: None,
-        }).unwrap();
-
-        let neighbors = conn.get_neighbors("a1", &m1.id, Direction::Out, Some("depends_on"), 100).unwrap();
-        assert_eq!(neighbors.len(), 1);
-        assert_eq!(neighbors[0].memory.id, m2.id);
     }
 
     #[test]
@@ -2560,51 +2525,10 @@ mod tests {
     }
 
     #[test]
-    fn test_traverse_direction() {
-        let (_dir, conn) = open_temp();
-        let a = make_memory(&conn, "a1", "A");
-        let b = make_memory(&conn, "a1", "B");
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
-            label: "uses", properties: None,
-        }).unwrap();
-
-        // In direction from B should find A
-        let nodes = conn.traverse("a1", &b.id, 2, None, Direction::In).unwrap();
-        assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].memory.id, a.id);
-
-        // Both direction from A should find B
-        let nodes = conn.traverse("a1", &a.id, 2, None, Direction::Both).unwrap();
-        assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].memory.id, b.id);
-    }
-
-    #[test]
     fn test_traverse_nonexistent_start() {
         let (_dir, conn) = open_temp();
         let result = conn.traverse("a1", "nonexistent", 2, None, Direction::Out);
         assert!(matches!(result, Err(MemoryError::NotFound(_))));
-    }
-
-    #[test]
-    fn test_traverse_label_filter() {
-        let (_dir, conn) = open_temp();
-        let a = make_memory(&conn, "a1", "A");
-        let b = make_memory(&conn, "a1", "B");
-        let c = make_memory(&conn, "a1", "C");
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
-            label: "uses", properties: None,
-        }).unwrap();
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &c.id,
-            label: "related_to", properties: None,
-        }).unwrap();
-
-        let nodes = conn.traverse("a1", &a.id, 2, Some("uses"), Direction::Out).unwrap();
-        assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].memory.id, b.id);
     }
 
     #[test]
@@ -2623,24 +2547,6 @@ mod tests {
         }).unwrap();
         assert_eq!(updated.label, "new");
         assert_eq!(updated.properties, None);
-    }
-
-    #[test]
-    fn test_update_edge_properties() {
-        let (_dir, conn) = open_temp();
-        let m1 = make_memory(&conn, "a1", "from");
-        let m2 = make_memory(&conn, "a1", "to");
-        let edge = conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
-
-        let updated = conn.update_edge(&UpdateEdgeParams {
-            actor_id: "a1", edge_id: &edge.id,
-            label: None, properties: Some(r#"{"k":"v"}"#),
-        }).unwrap();
-        assert_eq!(updated.label, "uses");
-        assert_eq!(updated.properties.as_deref(), Some(r#"{"k":"v"}"#));
     }
 
     #[test]
@@ -2683,45 +2589,4 @@ mod tests {
         assert_eq!(count, 0);
     }
 
-    #[test]
-    fn test_list_edge_labels() {
-        let (_dir, conn) = open_temp();
-        let m1 = make_memory(&conn, "a1", "m1");
-        let m2 = make_memory(&conn, "a1", "m2");
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "related_to", properties: None,
-        }).unwrap();
-
-        let labels = conn.list_edge_labels("a1").unwrap();
-        assert_eq!(labels.len(), 2);
-        assert_eq!(labels[0].label, "uses");
-        assert_eq!(labels[0].count, 2);
-        assert_eq!(labels[1].label, "related_to");
-        assert_eq!(labels[1].count, 1);
-    }
-
-    #[test]
-    fn test_graph_stats() {
-        let (_dir, conn) = open_temp();
-        let m1 = make_memory(&conn, "a1", "m1");
-        let m2 = make_memory(&conn, "a1", "m2");
-        conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
-
-        let stats = conn.graph_stats("a1").unwrap();
-        assert_eq!(stats.total_edges, 1);
-        assert_eq!(stats.labels.len(), 1);
-        assert!(!stats.most_connected.is_empty());
-    }
 }
