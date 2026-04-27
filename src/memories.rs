@@ -113,6 +113,11 @@ fn validate_insert_memory_params(params: &InsertMemoryParams<'_>) -> Result<(), 
                 "embedding must have exactly {EMBEDDING_DIM} dimensions"
             )));
         }
+        if emb.iter().any(|v| !v.is_finite()) {
+            return Err(MemoryError::InvalidInput(
+                "embedding contains NaN or infinity".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -142,6 +147,11 @@ fn validate_consolidate_params(action: &ConsolidateAction<'_>) -> Result<(), Mem
                 return Err(MemoryError::InvalidInput(format!(
                     "embedding must have exactly {EMBEDDING_DIM} dimensions"
                 )));
+            }
+            if emb.iter().any(|v| !v.is_finite()) {
+                return Err(MemoryError::InvalidInput(
+                    "embedding contains NaN or infinity".into(),
+                ));
             }
         }
     }
