@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use crate::error::MemoryError;
 use crate::events::{BranchFilter, Event, GetEventsParams, InsertEventParams, SessionInfo};
+use crate::graph::{ConnectedMemory, Direction, Edge, GraphStats, InsertEdgeParams, LabelCount, Neighbor, TraversalNode, UpdateEdgeParams};
 use crate::memories::{ConsolidateAction, InsertMemoryParams, ListMemoriesParams, Memory};
 use crate::search::{SearchFtsParams, SearchVectorParams};
 
@@ -315,10 +316,44 @@ pub trait Db {
     fn search_vector(&self, params: &SearchVectorParams<'_>) -> Result<Vec<(Memory, f64)>, MemoryError>;
 
     // -- Graph (Component 5) --
-    // fn insert_edge(...) -> Result<String, MemoryError>;
-    // fn get_neighbors(memory_id: &str, direction: Direction, label: Option<&str>, limit: u32) -> Result<Vec<Neighbor>, MemoryError>;
-    // fn traverse(start_memory_id: &str, max_depth: u32, label: Option<&str>, direction: Direction) -> Result<Vec<Memory>, MemoryError>;
-    // fn delete_edge(edge_id: &str) -> Result<(), MemoryError>;
+
+    /// Insert a directed edge between two memories. Both memories must belong to actor_id.
+    fn insert_edge(&self, params: &InsertEdgeParams<'_>) -> Result<Edge, MemoryError>;
+
+    /// Get an edge by ID, scoped to actor (verified via joined memories).
+    fn get_edge(&self, actor_id: &str, edge_id: &str) -> Result<Edge, MemoryError>;
+
+    /// Get neighbors of a memory, scoped to actor. Returns edges + connected memories.
+    fn get_neighbors(
+        &self,
+        actor_id: &str,
+        memory_id: &str,
+        direction: Direction,
+        label: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Neighbor>, MemoryError>;
+
+    /// BFS traversal from a start memory via recursive CTE, scoped to actor.
+    fn traverse(
+        &self,
+        actor_id: &str,
+        start_memory_id: &str,
+        max_depth: u32,
+        label: Option<&str>,
+        direction: Direction,
+    ) -> Result<Vec<TraversalNode>, MemoryError>;
+
+    /// Update an edge's label and/or properties, scoped to actor.
+    fn update_edge(&self, params: &UpdateEdgeParams<'_>) -> Result<Edge, MemoryError>;
+
+    /// Delete an edge by ID, scoped to actor.
+    fn delete_edge(&self, actor_id: &str, edge_id: &str) -> Result<(), MemoryError>;
+
+    /// List all distinct edge labels with counts, scoped to actor.
+    fn list_edge_labels(&self, actor_id: &str) -> Result<Vec<LabelCount>, MemoryError>;
+
+    /// Graph statistics, scoped to actor.
+    fn graph_stats(&self, actor_id: &str) -> Result<GraphStats, MemoryError>;
 
     // -- Sessions (Component 6) --
     // fn create_checkpoint(...) -> Result<String, MemoryError>;
@@ -368,6 +403,126 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
 fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
+
+fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
+    Ok(Edge {
+        id: row.get(0)?,
+        from_memory_id: row.get(1)?,
+        to_memory_id: row.get(2)?,
+        label: row.get(3)?,
+        properties: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+fn row_to_neighbor(row: &rusqlite::Row<'_>) -> rusqlite::Result<Neighbor> {
+    let edge = Edge {
+        id: row.get(0)?,
+        from_memory_id: row.get(1)?,
+        to_memory_id: row.get(2)?,
+        label: row.get(3)?,
+        properties: row.get(4)?,
+        created_at: row.get(5)?,
+    };
+    let memory = Memory {
+        id: row.get(6)?,
+        actor_id: row.get(7)?,
+        namespace: row.get(8)?,
+        strategy: row.get(9)?,
+        content: row.get(10)?,
+        metadata: row.get(11)?,
+        source_session_id: row.get(12)?,
+        is_valid: row.get::<_, i32>(13)? != 0,
+        superseded_by: row.get(14)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
+    };
+    Ok(Neighbor { edge, memory })
+}
+
+fn row_to_traversal_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<TraversalNode> {
+    let _memory_id: String = row.get(0)?;
+    let depth: u32 = row.get(1)?;
+    let path_json: String = row.get(2)?;
+    let path: Vec<String> = serde_json::from_str(&path_json).unwrap_or_default();
+    let memory = Memory {
+        id: row.get(3)?,
+        actor_id: row.get(4)?,
+        namespace: row.get(5)?,
+        strategy: row.get(6)?,
+        content: row.get(7)?,
+        metadata: row.get(8)?,
+        source_session_id: row.get(9)?,
+        is_valid: row.get::<_, i32>(10)? != 0,
+        superseded_by: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+    };
+    Ok(TraversalNode { memory, depth, path })
+}
+
+// Static SQL for traverse — one per direction. Label clause appended optionally.
+const SQL_TRAVERSE_OUT: &str =
+    "WITH RECURSIVE graph_walk(memory_id, depth, path, visited) AS (
+        SELECT :start_memory_id, 0, '[]', json_array(:start_memory_id)
+        UNION ALL
+        SELECT e.to_memory_id,
+            gw.depth + 1,
+            json_insert(gw.path, '$[#]', e.to_memory_id),
+            json_insert(gw.visited, '$[#]', e.to_memory_id)
+        FROM graph_walk gw
+        JOIN knowledge_edges e ON e.from_memory_id = gw.memory_id
+        JOIN memories mcheck ON mcheck.id = e.to_memory_id AND mcheck.actor_id = :actor_id
+        WHERE gw.depth < :max_depth
+          AND json_array_length(gw.visited) < 1000
+          AND NOT EXISTS (
+              SELECT 1 FROM json_each(gw.visited) WHERE value = e.to_memory_id
+          )";
+
+const SQL_TRAVERSE_IN: &str =
+    "WITH RECURSIVE graph_walk(memory_id, depth, path, visited) AS (
+        SELECT :start_memory_id, 0, '[]', json_array(:start_memory_id)
+        UNION ALL
+        SELECT e.from_memory_id,
+            gw.depth + 1,
+            json_insert(gw.path, '$[#]', e.from_memory_id),
+            json_insert(gw.visited, '$[#]', e.from_memory_id)
+        FROM graph_walk gw
+        JOIN knowledge_edges e ON e.to_memory_id = gw.memory_id
+        JOIN memories mcheck ON mcheck.id = e.from_memory_id AND mcheck.actor_id = :actor_id
+        WHERE gw.depth < :max_depth
+          AND json_array_length(gw.visited) < 1000
+          AND NOT EXISTS (
+              SELECT 1 FROM json_each(gw.visited) WHERE value = e.from_memory_id
+          )";
+
+const SQL_TRAVERSE_BOTH: &str =
+    "WITH RECURSIVE graph_walk(memory_id, depth, path, visited) AS (
+        SELECT :start_memory_id, 0, '[]', json_array(:start_memory_id)
+        UNION ALL
+        SELECT CASE WHEN e.from_memory_id = gw.memory_id THEN e.to_memory_id ELSE e.from_memory_id END,
+            gw.depth + 1,
+            json_insert(gw.path, '$[#]', CASE WHEN e.from_memory_id = gw.memory_id THEN e.to_memory_id ELSE e.from_memory_id END),
+            json_insert(gw.visited, '$[#]', CASE WHEN e.from_memory_id = gw.memory_id THEN e.to_memory_id ELSE e.from_memory_id END)
+        FROM graph_walk gw
+        JOIN knowledge_edges e ON e.from_memory_id = gw.memory_id OR e.to_memory_id = gw.memory_id
+        JOIN memories mcheck ON mcheck.id = CASE WHEN e.from_memory_id = gw.memory_id THEN e.to_memory_id ELSE e.from_memory_id END AND mcheck.actor_id = :actor_id
+        WHERE gw.depth < :max_depth
+          AND json_array_length(gw.visited) < 1000
+          AND NOT EXISTS (
+              SELECT 1 FROM json_each(gw.visited) WHERE value = CASE WHEN e.from_memory_id = gw.memory_id THEN e.to_memory_id ELSE e.from_memory_id END
+          )";
+
+const SQL_TRAVERSE_TAIL: &str =
+    ")
+     SELECT gw.memory_id, gw.depth, gw.path,
+            m.id, m.actor_id, m.namespace, m.strategy, m.content, m.metadata,
+            m.source_session_id, m.is_valid, m.superseded_by, m.created_at, m.updated_at
+     FROM graph_walk gw
+     JOIN memories m ON m.id = gw.memory_id AND m.actor_id = :actor_id
+     WHERE gw.depth > 0
+     ORDER BY gw.depth ASC, m.created_at DESC
+     LIMIT 1000";
 
 impl Db for Connection {
     fn db_size(&self) -> Result<u64, MemoryError> {
@@ -980,6 +1135,377 @@ impl Db for Connection {
             })?);
         }
         Ok(results)
+    }
+    // -- Graph (Component 5) --
+
+    fn insert_edge(&self, params: &InsertEdgeParams<'_>) -> Result<Edge, MemoryError> {
+        // Verify both memories exist and belong to actor
+        let count: u32 = self.query_row(
+            "SELECT COUNT(*) FROM memories WHERE id IN (:from_id, :to_id) AND actor_id = :actor_id",
+            rusqlite::named_params! {
+                ":from_id": params.from_memory_id,
+                ":to_id": params.to_memory_id,
+                ":actor_id": params.actor_id,
+            },
+            |row| row.get(0),
+        ).map_err(|e| {
+            tracing::error!("insert_edge verify failed: {e}");
+            MemoryError::QueryFailed("failed to verify memories".into())
+        })?;
+        if count != 2 {
+            return Err(MemoryError::NotFound("memory not found".into()));
+        }
+
+        let id = uuid::Uuid::new_v4().to_string();
+        self.query_row(
+            "INSERT INTO knowledge_edges (id, from_memory_id, to_memory_id, label, properties)
+             VALUES (:id, :from_memory_id, :to_memory_id, :label, :properties)
+             RETURNING id, from_memory_id, to_memory_id, label, properties, created_at",
+            rusqlite::named_params! {
+                ":id": id,
+                ":from_memory_id": params.from_memory_id,
+                ":to_memory_id": params.to_memory_id,
+                ":label": params.label,
+                ":properties": params.properties,
+            },
+            row_to_edge,
+        ).map_err(|e| {
+            tracing::error!("insert_edge failed: {e}");
+            MemoryError::QueryFailed("failed to insert edge".into())
+        })
+    }
+
+    fn get_edge(&self, actor_id: &str, edge_id: &str) -> Result<Edge, MemoryError> {
+        self.query_row(
+            "SELECT e.id, e.from_memory_id, e.to_memory_id, e.label, e.properties, e.created_at
+             FROM knowledge_edges e
+             JOIN memories m ON m.id = e.from_memory_id
+             WHERE e.id = :edge_id AND m.actor_id = :actor_id",
+            rusqlite::named_params! { ":edge_id": edge_id, ":actor_id": actor_id },
+            row_to_edge,
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(edge_id.to_string()),
+            _ => {
+                tracing::error!("get_edge failed: {e}");
+                MemoryError::QueryFailed("failed to get edge".into())
+            }
+        })
+    }
+
+    fn get_neighbors(
+        &self,
+        actor_id: &str,
+        memory_id: &str,
+        direction: Direction,
+        label: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Neighbor>, MemoryError> {
+        let base_sql = match direction {
+            Direction::Out => {
+                "SELECT e.id, e.from_memory_id, e.to_memory_id, e.label, e.properties, e.created_at,
+                        m.id, m.actor_id, m.namespace, m.strategy, m.content, m.metadata,
+                        m.source_session_id, m.is_valid, m.superseded_by, m.created_at, m.updated_at
+                 FROM knowledge_edges e
+                 JOIN memories m ON m.id = e.to_memory_id
+                 WHERE e.from_memory_id = :memory_id AND m.actor_id = :actor_id"
+            }
+            Direction::In => {
+                "SELECT e.id, e.from_memory_id, e.to_memory_id, e.label, e.properties, e.created_at,
+                        m.id, m.actor_id, m.namespace, m.strategy, m.content, m.metadata,
+                        m.source_session_id, m.is_valid, m.superseded_by, m.created_at, m.updated_at
+                 FROM knowledge_edges e
+                 JOIN memories m ON m.id = e.from_memory_id
+                 WHERE e.to_memory_id = :memory_id AND m.actor_id = :actor_id"
+            }
+            Direction::Both => {
+                "SELECT e.id, e.from_memory_id, e.to_memory_id, e.label, e.properties, e.created_at,
+                        m.id, m.actor_id, m.namespace, m.strategy, m.content, m.metadata,
+                        m.source_session_id, m.is_valid, m.superseded_by, m.created_at, m.updated_at
+                 FROM knowledge_edges e
+                 JOIN memories m ON m.id = CASE
+                     WHEN e.from_memory_id = :memory_id THEN e.to_memory_id
+                     ELSE e.from_memory_id
+                 END
+                 WHERE (e.from_memory_id = :memory_id OR e.to_memory_id = :memory_id)
+                   AND m.actor_id = :actor_id"
+            }
+        };
+
+        let sql = if label.is_some() {
+            format!("{base_sql} AND e.label = :label ORDER BY e.created_at DESC LIMIT :limit")
+        } else {
+            format!("{base_sql} ORDER BY e.created_at DESC LIMIT :limit")
+        };
+
+        let mut stmt = self.prepare(&sql).map_err(|e| {
+            tracing::error!("get_neighbors prepare failed: {e}");
+            MemoryError::QueryFailed("failed to prepare get_neighbors query".into())
+        })?;
+
+        let rows = if let Some(lbl) = label {
+            stmt.query_map(
+                rusqlite::named_params! {
+                    ":memory_id": memory_id,
+                    ":actor_id": actor_id,
+                    ":label": lbl,
+                    ":limit": limit,
+                },
+                row_to_neighbor,
+            )
+        } else {
+            stmt.query_map(
+                rusqlite::named_params! {
+                    ":memory_id": memory_id,
+                    ":actor_id": actor_id,
+                    ":limit": limit,
+                },
+                row_to_neighbor,
+            )
+        }.map_err(|e| {
+            tracing::error!("get_neighbors query failed: {e}");
+            MemoryError::QueryFailed("failed to query neighbors".into())
+        })?;
+
+        let mut neighbors = Vec::new();
+        for row in rows {
+            neighbors.push(row.map_err(|e| {
+                tracing::error!("get_neighbors row read failed: {e}");
+                MemoryError::QueryFailed("failed to read neighbor row".into())
+            })?);
+        }
+        Ok(neighbors)
+    }
+
+    fn traverse(
+        &self,
+        actor_id: &str,
+        start_memory_id: &str,
+        max_depth: u32,
+        label: Option<&str>,
+        direction: Direction,
+    ) -> Result<Vec<TraversalNode>, MemoryError> {
+        // Verify start memory exists and belongs to actor
+        self.query_row(
+            "SELECT 1 FROM memories WHERE id = :id AND actor_id = :actor_id",
+            rusqlite::named_params! { ":id": start_memory_id, ":actor_id": actor_id },
+            |_| Ok(()),
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(start_memory_id.to_string()),
+            _ => {
+                tracing::error!("traverse verify failed: {e}");
+                MemoryError::QueryFailed("failed to verify start memory".into())
+            }
+        })?;
+
+        let base = match direction {
+            Direction::Out => SQL_TRAVERSE_OUT,
+            Direction::In => SQL_TRAVERSE_IN,
+            Direction::Both => SQL_TRAVERSE_BOTH,
+        };
+
+        let sql = if label.is_some() {
+            format!("{base} AND e.label = :label{SQL_TRAVERSE_TAIL}")
+        } else {
+            format!("{base}{SQL_TRAVERSE_TAIL}")
+        };
+
+        let mut stmt = self.prepare(&sql).map_err(|e| {
+            tracing::error!("traverse prepare failed: {e}");
+            MemoryError::QueryFailed("failed to prepare traverse query".into())
+        })?;
+
+        let rows = if let Some(lbl) = label {
+            stmt.query_map(
+                rusqlite::named_params! {
+                    ":start_memory_id": start_memory_id,
+                    ":actor_id": actor_id,
+                    ":max_depth": max_depth,
+                    ":label": lbl,
+                },
+                row_to_traversal_node,
+            )
+        } else {
+            stmt.query_map(
+                rusqlite::named_params! {
+                    ":start_memory_id": start_memory_id,
+                    ":actor_id": actor_id,
+                    ":max_depth": max_depth,
+                },
+                row_to_traversal_node,
+            )
+        }.map_err(|e| {
+            tracing::error!("traverse query failed: {e}");
+            MemoryError::QueryFailed("failed to execute traverse".into())
+        })?;
+
+        let mut nodes = Vec::new();
+        for row in rows {
+            nodes.push(row.map_err(|e| {
+                tracing::error!("traverse row read failed: {e}");
+                MemoryError::QueryFailed("failed to read traversal row".into())
+            })?);
+        }
+        Ok(nodes)
+    }
+
+    fn update_edge(&self, params: &UpdateEdgeParams<'_>) -> Result<Edge, MemoryError> {
+        let result = match (params.label, params.properties) {
+            (Some(label), Some(props)) => {
+                self.query_row(
+                    "UPDATE knowledge_edges SET label = :label, properties = :properties
+                     WHERE id = :edge_id
+                       AND EXISTS (SELECT 1 FROM memories WHERE id = knowledge_edges.from_memory_id AND actor_id = :actor_id)
+                     RETURNING id, from_memory_id, to_memory_id, label, properties, created_at",
+                    rusqlite::named_params! {
+                        ":edge_id": params.edge_id,
+                        ":actor_id": params.actor_id,
+                        ":label": label,
+                        ":properties": props,
+                    },
+                    row_to_edge,
+                )
+            }
+            (Some(label), None) => {
+                self.query_row(
+                    "UPDATE knowledge_edges SET label = :label
+                     WHERE id = :edge_id
+                       AND EXISTS (SELECT 1 FROM memories WHERE id = knowledge_edges.from_memory_id AND actor_id = :actor_id)
+                     RETURNING id, from_memory_id, to_memory_id, label, properties, created_at",
+                    rusqlite::named_params! {
+                        ":edge_id": params.edge_id,
+                        ":actor_id": params.actor_id,
+                        ":label": label,
+                    },
+                    row_to_edge,
+                )
+            }
+            (None, Some(props)) => {
+                self.query_row(
+                    "UPDATE knowledge_edges SET properties = :properties
+                     WHERE id = :edge_id
+                       AND EXISTS (SELECT 1 FROM memories WHERE id = knowledge_edges.from_memory_id AND actor_id = :actor_id)
+                     RETURNING id, from_memory_id, to_memory_id, label, properties, created_at",
+                    rusqlite::named_params! {
+                        ":edge_id": params.edge_id,
+                        ":actor_id": params.actor_id,
+                        ":properties": props,
+                    },
+                    row_to_edge,
+                )
+            }
+            (None, None) => unreachable!("validated by caller"),
+        };
+
+        result.map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(params.edge_id.to_string()),
+            _ => {
+                tracing::error!("update_edge failed: {e}");
+                MemoryError::QueryFailed("failed to update edge".into())
+            }
+        })
+    }
+
+    fn delete_edge(&self, actor_id: &str, edge_id: &str) -> Result<(), MemoryError> {
+        let count = self.execute(
+            "DELETE FROM knowledge_edges
+             WHERE id = :edge_id
+               AND EXISTS (SELECT 1 FROM memories WHERE id = knowledge_edges.from_memory_id AND actor_id = :actor_id)",
+            rusqlite::named_params! { ":edge_id": edge_id, ":actor_id": actor_id },
+        ).map_err(|e| {
+            tracing::error!("delete_edge failed: {e}");
+            MemoryError::QueryFailed("failed to delete edge".into())
+        })?;
+        if count == 0 {
+            return Err(MemoryError::NotFound(edge_id.to_string()));
+        }
+        Ok(())
+    }
+
+    fn list_edge_labels(&self, actor_id: &str) -> Result<Vec<LabelCount>, MemoryError> {
+        let mut stmt = self.prepare(
+            "SELECT e.label, COUNT(*) as count
+             FROM knowledge_edges e
+             JOIN memories m ON m.id = e.from_memory_id
+             WHERE m.actor_id = :actor_id
+             GROUP BY e.label ORDER BY count DESC"
+        ).map_err(|e| {
+            tracing::error!("list_edge_labels prepare failed: {e}");
+            MemoryError::QueryFailed("failed to prepare list_edge_labels query".into())
+        })?;
+
+        let rows = stmt.query_map(
+            rusqlite::named_params! { ":actor_id": actor_id },
+            |row| {
+            Ok(LabelCount {
+                label: row.get(0)?,
+                count: row.get(1)?,
+            })
+        }).map_err(|e| {
+            tracing::error!("list_edge_labels query failed: {e}");
+            MemoryError::QueryFailed("failed to query edge labels".into())
+        })?;
+
+        let mut labels = Vec::new();
+        for row in rows {
+            labels.push(row.map_err(|e| {
+                tracing::error!("list_edge_labels row read failed: {e}");
+                MemoryError::QueryFailed("failed to read label row".into())
+            })?);
+        }
+        Ok(labels)
+    }
+
+    fn graph_stats(&self, actor_id: &str) -> Result<GraphStats, MemoryError> {
+        let total_edges: u64 = self.query_row(
+            "SELECT COUNT(*) FROM knowledge_edges e
+             JOIN memories m ON m.id = e.from_memory_id
+             WHERE m.actor_id = :actor_id",
+            rusqlite::named_params! { ":actor_id": actor_id },
+            |row| row.get(0),
+        ).map_err(|e| {
+            tracing::error!("graph_stats count failed: {e}");
+            MemoryError::QueryFailed("failed to count edges".into())
+        })?;
+
+        let labels = self.list_edge_labels(actor_id)?;
+
+        let mut stmt = self.prepare(
+            "SELECT memory_id, COUNT(*) as edge_count FROM (
+                 SELECT e.from_memory_id AS memory_id FROM knowledge_edges e
+                 JOIN memories m ON m.id = e.from_memory_id WHERE m.actor_id = :actor_id
+                 UNION ALL
+                 SELECT e.to_memory_id AS memory_id FROM knowledge_edges e
+                 JOIN memories m ON m.id = e.from_memory_id WHERE m.actor_id = :actor_id
+             )
+             GROUP BY memory_id
+             ORDER BY edge_count DESC
+             LIMIT 10"
+        ).map_err(|e| {
+            tracing::error!("graph_stats most_connected prepare failed: {e}");
+            MemoryError::QueryFailed("failed to prepare most_connected query".into())
+        })?;
+
+        let rows = stmt.query_map(
+            rusqlite::named_params! { ":actor_id": actor_id },
+            |row| {
+            Ok(ConnectedMemory {
+                memory_id: row.get(0)?,
+                edge_count: row.get(1)?,
+            })
+        }).map_err(|e| {
+            tracing::error!("graph_stats most_connected query failed: {e}");
+            MemoryError::QueryFailed("failed to query most connected".into())
+        })?;
+
+        let mut most_connected = Vec::new();
+        for row in rows {
+            most_connected.push(row.map_err(|e| {
+                tracing::error!("graph_stats row read failed: {e}");
+                MemoryError::QueryFailed("failed to read most connected row".into())
+            })?);
+        }
+
+        Ok(GraphStats { total_edges, labels, most_connected })
     }
 }
 
@@ -1815,5 +2341,387 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, m.id);
         assert!(results[0].1 < 1e-5);
+    }
+
+    // -- Graph tests (Component 5) --
+
+    use crate::graph::{Direction, InsertEdgeParams, UpdateEdgeParams};
+
+    fn make_memory(conn: &Connection, actor: &str, content: &str) -> crate::memories::Memory {
+        conn.insert_memory(&InsertMemoryParams {
+            actor_id: actor,
+            content,
+            strategy: "semantic",
+            namespace: None,
+            metadata: None,
+            source_session_id: None,
+            embedding: None,
+        }).unwrap()
+    }
+
+    #[test]
+    fn test_insert_and_get_edge() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "from");
+        let m2 = make_memory(&conn, "a1", "to");
+        let edge = conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1",
+            from_memory_id: &m1.id,
+            to_memory_id: &m2.id,
+            label: "depends_on",
+            properties: Some(r#"{"weight": 1}"#),
+        }).unwrap();
+        assert_eq!(edge.from_memory_id, m1.id);
+        assert_eq!(edge.to_memory_id, m2.id);
+        assert_eq!(edge.label, "depends_on");
+        assert_eq!(edge.properties.as_deref(), Some(r#"{"weight": 1}"#));
+        assert!(!edge.id.is_empty());
+
+        let fetched = conn.get_edge("a1", &edge.id).unwrap();
+        assert_eq!(fetched.id, edge.id);
+        assert_eq!(fetched.label, "depends_on");
+    }
+
+    #[test]
+    fn test_insert_edge_missing_memory() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "from");
+        let result = conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1",
+            from_memory_id: &m1.id,
+            to_memory_id: "nonexistent",
+            label: "uses",
+            properties: None,
+        });
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_insert_edge_wrong_actor() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "from");
+        let m2 = make_memory(&conn, "a2", "to");
+        let result = conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1",
+            from_memory_id: &m1.id,
+            to_memory_id: &m2.id,
+            label: "uses",
+            properties: None,
+        });
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_get_neighbors_out() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "center");
+        let m2 = make_memory(&conn, "a1", "out1");
+        let m3 = make_memory(&conn, "a1", "out2");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m3.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        // Incoming edge should not appear in Out
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m2.id, to_memory_id: &m1.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        let neighbors = conn.get_neighbors("a1", &m1.id, Direction::Out, None, 100).unwrap();
+        assert_eq!(neighbors.len(), 2);
+        let ids: Vec<&str> = neighbors.iter().map(|n| n.memory.id.as_str()).collect();
+        assert!(ids.contains(&m2.id.as_str()));
+        assert!(ids.contains(&m3.id.as_str()));
+    }
+
+    #[test]
+    fn test_get_neighbors_in() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "target");
+        let m2 = make_memory(&conn, "a1", "source");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m2.id, to_memory_id: &m1.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        let neighbors = conn.get_neighbors("a1", &m1.id, Direction::In, None, 100).unwrap();
+        assert_eq!(neighbors.len(), 1);
+        assert_eq!(neighbors[0].memory.id, m2.id);
+    }
+
+    #[test]
+    fn test_get_neighbors_both() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "center");
+        let m2 = make_memory(&conn, "a1", "out");
+        let m3 = make_memory(&conn, "a1", "in");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m3.id, to_memory_id: &m1.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        let neighbors = conn.get_neighbors("a1", &m1.id, Direction::Both, None, 100).unwrap();
+        assert_eq!(neighbors.len(), 2);
+        let ids: Vec<&str> = neighbors.iter().map(|n| n.memory.id.as_str()).collect();
+        assert!(ids.contains(&m2.id.as_str()));
+        assert!(ids.contains(&m3.id.as_str()));
+    }
+
+    #[test]
+    fn test_get_neighbors_label_filter() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "center");
+        let m2 = make_memory(&conn, "a1", "dep");
+        let m3 = make_memory(&conn, "a1", "rel");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "depends_on", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m3.id,
+            label: "related_to", properties: None,
+        }).unwrap();
+
+        let neighbors = conn.get_neighbors("a1", &m1.id, Direction::Out, Some("depends_on"), 100).unwrap();
+        assert_eq!(neighbors.len(), 1);
+        assert_eq!(neighbors[0].memory.id, m2.id);
+    }
+
+    #[test]
+    fn test_traverse_basic() {
+        let (_dir, conn) = open_temp();
+        let a = make_memory(&conn, "a1", "A");
+        let b = make_memory(&conn, "a1", "B");
+        let c = make_memory(&conn, "a1", "C");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &b.id, to_memory_id: &c.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        let nodes = conn.traverse("a1", &a.id, 2, None, Direction::Out).unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].depth, 1);
+        assert_eq!(nodes[0].memory.id, b.id);
+        assert_eq!(nodes[1].depth, 2);
+        assert_eq!(nodes[1].memory.id, c.id);
+        assert_eq!(nodes[1].path.len(), 2);
+    }
+
+    #[test]
+    fn test_traverse_cycle_detection() {
+        let (_dir, conn) = open_temp();
+        let a = make_memory(&conn, "a1", "A");
+        let b = make_memory(&conn, "a1", "B");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &b.id, to_memory_id: &a.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        let nodes = conn.traverse("a1", &a.id, 5, None, Direction::Out).unwrap();
+        // Should visit B once, then stop (A already visited)
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].memory.id, b.id);
+    }
+
+    #[test]
+    fn test_traverse_max_depth() {
+        let (_dir, conn) = open_temp();
+        let a = make_memory(&conn, "a1", "A");
+        let b = make_memory(&conn, "a1", "B");
+        let c = make_memory(&conn, "a1", "C");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &b.id, to_memory_id: &c.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        let nodes = conn.traverse("a1", &a.id, 1, None, Direction::Out).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].memory.id, b.id);
+    }
+
+    #[test]
+    fn test_traverse_direction() {
+        let (_dir, conn) = open_temp();
+        let a = make_memory(&conn, "a1", "A");
+        let b = make_memory(&conn, "a1", "B");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        // In direction from B should find A
+        let nodes = conn.traverse("a1", &b.id, 2, None, Direction::In).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].memory.id, a.id);
+
+        // Both direction from A should find B
+        let nodes = conn.traverse("a1", &a.id, 2, None, Direction::Both).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].memory.id, b.id);
+    }
+
+    #[test]
+    fn test_traverse_nonexistent_start() {
+        let (_dir, conn) = open_temp();
+        let result = conn.traverse("a1", "nonexistent", 2, None, Direction::Out);
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_traverse_label_filter() {
+        let (_dir, conn) = open_temp();
+        let a = make_memory(&conn, "a1", "A");
+        let b = make_memory(&conn, "a1", "B");
+        let c = make_memory(&conn, "a1", "C");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &c.id,
+            label: "related_to", properties: None,
+        }).unwrap();
+
+        let nodes = conn.traverse("a1", &a.id, 2, Some("uses"), Direction::Out).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].memory.id, b.id);
+    }
+
+    #[test]
+    fn test_update_edge_label() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "from");
+        let m2 = make_memory(&conn, "a1", "to");
+        let edge = conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "old", properties: None,
+        }).unwrap();
+
+        let updated = conn.update_edge(&UpdateEdgeParams {
+            actor_id: "a1", edge_id: &edge.id,
+            label: Some("new"), properties: None,
+        }).unwrap();
+        assert_eq!(updated.label, "new");
+        assert_eq!(updated.properties, None);
+    }
+
+    #[test]
+    fn test_update_edge_properties() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "from");
+        let m2 = make_memory(&conn, "a1", "to");
+        let edge = conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        let updated = conn.update_edge(&UpdateEdgeParams {
+            actor_id: "a1", edge_id: &edge.id,
+            label: None, properties: Some(r#"{"k":"v"}"#),
+        }).unwrap();
+        assert_eq!(updated.label, "uses");
+        assert_eq!(updated.properties.as_deref(), Some(r#"{"k":"v"}"#));
+    }
+
+    #[test]
+    fn test_delete_edge() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "from");
+        let m2 = make_memory(&conn, "a1", "to");
+        let edge = conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        conn.delete_edge("a1", &edge.id).unwrap();
+        assert!(matches!(conn.get_edge("a1", &edge.id), Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_delete_edge_not_found() {
+        let (_dir, conn) = open_temp();
+        let result = conn.delete_edge("a1", "nonexistent");
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_cascade_delete_memory() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "from");
+        let m2 = make_memory(&conn, "a1", "to");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        conn.delete_memory("a1", &m1.id).unwrap();
+
+        // Edge should be gone due to CASCADE
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM knowledge_edges", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_list_edge_labels() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "m1");
+        let m2 = make_memory(&conn, "a1", "m2");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "uses", properties: None,
+        }).unwrap();
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "related_to", properties: None,
+        }).unwrap();
+
+        let labels = conn.list_edge_labels("a1").unwrap();
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[0].label, "uses");
+        assert_eq!(labels[0].count, 2);
+        assert_eq!(labels[1].label, "related_to");
+        assert_eq!(labels[1].count, 1);
+    }
+
+    #[test]
+    fn test_graph_stats() {
+        let (_dir, conn) = open_temp();
+        let m1 = make_memory(&conn, "a1", "m1");
+        let m2 = make_memory(&conn, "a1", "m2");
+        conn.insert_edge(&InsertEdgeParams {
+            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
+            label: "uses", properties: None,
+        }).unwrap();
+
+        let stats = conn.graph_stats("a1").unwrap();
+        assert_eq!(stats.total_edges, 1);
+        assert_eq!(stats.labels.len(), 1);
+        assert!(!stats.most_connected.is_empty());
     }
 }

@@ -89,3 +89,11 @@ Capture what went wrong, what surprised us, and what we'd do differently.
 - **Expand MCP tool descriptions for LLM consumption.** One-line descriptions are insufficient. LLMs need 2-4 sentences explaining: purpose, required vs optional parameters, valid enum values, and return shape. The tool description is the primary signal an LLM uses to decide when and how to call a tool.
 
 - **Hand-formatted JSON strings are fragile.** Using `format!()` to construct JSON error responses risks malformed output if the interpolated values contain quotes or backslashes. Use `serde_json::json!()` or a typed struct with `Serialize` for all JSON construction.
+
+## From Component 5 (Knowledge Graph)
+
+- **Actor-scoping must extend to aggregate/stats queries.** The design initially marked `list_edge_labels` and `graph_stats` as "global, not actor-scoped" because they seemed like metadata queries. Both design review and code review flagged this as Critical — in a multi-actor store, even label names and connection counts leak information across actor boundaries. Apply actor scoping to every query that touches user data, including aggregates.
+
+- **Static SQL variants beat dynamic SQL for complex queries.** The recursive CTE for graph traversal has 3 direction variants. The initial design said "build SQL dynamically based on direction." The maintainability reviewer flagged this as High risk — string concatenation for recursive CTEs is error-prone and hard to debug. Pre-defining 3 static SQL constants (one per direction) and selecting via `match` is more code but far more reliable and testable.
+
+- **Use serde enums for fixed-value MCP parameters consistently.** The `Direction` enum initially used a raw string with a `parse_direction` helper, while `EventType` and `Role` in the same codebase used typed serde enums. The interoperability reviewer caught the inconsistency. Lesson: when a pattern exists (typed serde enums for MCP params), follow it everywhere. Don't introduce a second pattern for the same problem.

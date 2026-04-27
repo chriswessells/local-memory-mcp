@@ -21,13 +21,14 @@
 
 - [x] Component 9: MCP server — design (1 Critical + 11 High resolved), code (15 tools, 4 tests), code review (2 fixes: error propagation, JSON escaping), merged
 
+- [x] Component 5: Knowledge graph — design (1 Critical + 2 High resolved), code (26 tests), code review (1 Critical + 1 High fixed), merged
+
 ## In Progress
 
 _(none)_
 
 ## Planned — Implementation (per-component, each goes through full workflow)
 
-- [ ] Component 5: Knowledge graph — design, review, code, review
 - [ ] Component 6: Session tools (checkpoints, branches) — design, review, code, review
 - [ ] Component 7: Store management tools — design, review, code, review
 - [ ] Component 8: Namespace tools — design, review, code, review
@@ -182,6 +183,20 @@ _(none)_
 - [ ] Use named constants for default pagination values instead of magic numbers
 - [ ] Add integration tests for MCP tool handlers (add_event blob path, store_memory, recall)
 - [ ] Add crate-level doc comment to lib.rs
+
+### From Component 5 design review (Medium/Low)
+- [ ] Properties JSON nesting depth guard (max 10 levels) to prevent stack overflow in serde_json
+- [ ] Label validation: reject control characters (bytes < 0x20) in edge labels
+- [ ] Duplicate edge detection: consider UNIQUE constraint on (from_memory_id, to_memory_id, label) or upsert semantic
+- [ ] Consolidation edge orphaning: add mechanism to discover/re-link edges when memory is consolidated
+- [ ] graph_stats most_connected query is O(n) full scan — optimize if edge count exceeds 10K
+- [ ] Expose `graph.get_edge` as MCP tool (currently internal-only Db method)
+- [ ] Traverse: return `truncated: bool` when max_visited cap is hit
+- [ ] insert_edge: wrap existence check + INSERT in unchecked_transaction for defense-in-depth
+- [ ] Traverse CTE: add LIMIT 1000 to final SELECT as belt-and-suspenders (already in design)
+- [ ] CASCADE delete: include edges_removed count in memory.delete response
+- [ ] Add `updated_at` column to knowledge_edges schema to avoid future migration
+- [ ] Parse traverse path JSON with serde_json::from_str and map errors to QueryFailed
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)

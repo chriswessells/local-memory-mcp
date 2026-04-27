@@ -39,4 +39,9 @@
 | 2026-04-27 | Component 9 | 25 min | Coding: tools.rs (653 lines, 15 tools, 4 tests), main.rs rewrite, memories.rs NaN fix, Cargo.toml deps |
 | 2026-04-27 | Component 9 | 15 min | Code review: 5 personas, fixed 2 issues (encode_event_blob error propagation, JSON escaping) |
 | 2026-04-27 | Component 9 | 10 min | Merge, update tracking files |
-| | | **~540 min** | **Total** |
+| 2026-04-27 | Component 5 | 15 min | Wrote detailed design for knowledge-graph.md (Edge types, Db trait methods, recursive CTE traversal, 7 MCP tools) |
+| 2026-04-27 | Component 5 | 15 min | Design review: 5 personas, 1 Critical (no actor_id scoping) + 2 High (dynamic SQL, raw string Direction). All resolved. |
+| 2026-04-27 | Component 5 | 25 min | Coding: graph.rs (types, validation, business logic), 8 Db trait methods + impls, 7 MCP tools, 26 new tests |
+| 2026-04-27 | Component 5 | 15 min | Code review: 5 personas, 1 Critical (list_labels/stats not actor-scoped) + 1 High (API inconsistency). Fixed. |
+| 2026-04-27 | Component 5 | 5 min | Merge, update tracking files |
+| | | **~615 min** | **Total** |

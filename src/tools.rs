@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use crate::error::MemoryError;
 use crate::events::{self, BranchFilter, Event, InsertEventParams};
+use crate::graph::{self, Direction, InsertEdgeParams as GraphInsertEdgeParams, UpdateEdgeParams as GraphUpdateEdgeParams};
 use crate::memories::{self, ConsolidateAction, InsertMemoryParams, ListMemoriesParams};
 use crate::search::{self, RecallParams};
 use crate::store::StoreManager;
@@ -231,6 +232,72 @@ struct SwitchStoreParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct DeleteStoreParams {
     name: String,
+}
+
+// -- Graph param structs --
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct AddEdgeParams {
+    actor_id: String,
+    from_memory_id: String,
+    to_memory_id: String,
+    label: String,
+    #[serde(default)]
+    properties: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct GetNeighborsParams {
+    actor_id: String,
+    memory_id: String,
+    /// Direction: "out" (default), "in", or "both"
+    #[serde(default)]
+    direction: Option<Direction>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct TraverseParams {
+    actor_id: String,
+    start_memory_id: String,
+    /// Max traversal depth (default 2, max 5)
+    #[serde(default)]
+    max_depth: Option<u32>,
+    #[serde(default)]
+    label: Option<String>,
+    /// Direction: "out" (default), "in", or "both"
+    #[serde(default)]
+    direction: Option<Direction>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateEdgeToolParams {
+    actor_id: String,
+    edge_id: String,
+    #[serde(default)]
+    label: Option<String>,
+    /// JSON object string for edge properties
+    #[serde(default)]
+    properties: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct DeleteEdgeParams {
+    actor_id: String,
+    edge_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ListLabelsParams {
+    actor_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct GraphStatsParams {
+    actor_id: String,
 }
 
 // --- Helpers ---
@@ -575,6 +642,141 @@ impl MemoryServer {
         self.run(move |mgr| {
             mgr.delete(&params.name)?;
             Ok(serde_json::json!({ "deleted": true }))
+        })
+        .await
+    }
+
+    // -- Graph tools (Component 5) --
+
+    #[tool(
+        name = "graph.add_edge",
+        description = "Create a directed edge between two memories. Both memories must belong to the same actor. Self-edges are not allowed. Returns the full edge object."
+    )]
+    async fn add_edge(
+        &self,
+        Parameters(params): Parameters<AddEdgeParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let p = GraphInsertEdgeParams {
+                actor_id: &params.actor_id,
+                from_memory_id: &params.from_memory_id,
+                to_memory_id: &params.to_memory_id,
+                label: &params.label,
+                properties: params.properties.as_deref(),
+            };
+            graph::add_edge(db, &p)
+        })
+        .await
+    }
+
+    #[tool(
+        name = "graph.get_neighbors",
+        description = "Get neighbors of a memory via its edges. Returns edges and connected memories. Direction: 'out' (default), 'in', or 'both'."
+    )]
+    async fn get_neighbors(
+        &self,
+        Parameters(params): Parameters<GetNeighborsParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            graph::get_neighbors(
+                db,
+                &params.actor_id,
+                &params.memory_id,
+                params.direction.unwrap_or_default(),
+                params.label.as_deref(),
+                params.limit.unwrap_or(graph::DEFAULT_NEIGHBOR_LIMIT),
+            )
+        })
+        .await
+    }
+
+    #[tool(
+        name = "graph.traverse",
+        description = "BFS traversal from a start memory through edges. Returns visited memories with depth and path. Direction: 'out' (default), 'in', or 'both'. Max depth 5."
+    )]
+    async fn traverse(
+        &self,
+        Parameters(params): Parameters<TraverseParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            graph::traverse(
+                db,
+                &params.actor_id,
+                &params.start_memory_id,
+                params.max_depth.unwrap_or(graph::DEFAULT_TRAVERSE_DEPTH),
+                params.label.as_deref(),
+                params.direction.unwrap_or_default(),
+            )
+        })
+        .await
+    }
+
+    #[tool(
+        name = "graph.update_edge",
+        description = "Update an edge's label and/or properties. At least one must be provided. Returns the updated edge object."
+    )]
+    async fn update_edge(
+        &self,
+        Parameters(params): Parameters<UpdateEdgeToolParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let p = GraphUpdateEdgeParams {
+                actor_id: &params.actor_id,
+                edge_id: &params.edge_id,
+                label: params.label.as_deref(),
+                properties: params.properties.as_deref(),
+            };
+            graph::update_edge(db, &p)
+        })
+        .await
+    }
+
+    #[tool(
+        name = "graph.delete_edge",
+        description = "Delete an edge by ID, scoped to the given actor. Returns {\"deleted\": true} on success."
+    )]
+    async fn delete_edge(
+        &self,
+        Parameters(params): Parameters<DeleteEdgeParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            graph::delete_edge(db, &params.actor_id, &params.edge_id)?;
+            Ok(serde_json::json!({ "deleted": true }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "graph.list_labels",
+        description = "List all distinct edge labels with their counts for the given actor, ordered by count descending."
+    )]
+    async fn list_labels(
+        &self,
+        Parameters(params): Parameters<ListLabelsParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            graph::list_labels(db, &params.actor_id)
+        })
+        .await
+    }
+
+    #[tool(
+        name = "graph.stats",
+        description = "Get graph statistics for the given actor: total edge count, label distribution, and top 10 most connected memories."
+    )]
+    async fn graph_stats(
+        &self,
+        Parameters(params): Parameters<GraphStatsParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            graph::graph_stats(db, &params.actor_id)
         })
         .await
     }
