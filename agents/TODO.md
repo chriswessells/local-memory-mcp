@@ -49,7 +49,7 @@
 - [ ] Component 8: Namespace tools — design, review, code, review
 - [ ] Component 9: MCP server — ✅ done (moved to Completed)
 - [x] Component 10: CI/CD — design (2 Critical + 6 High resolved in design review), code (ci.yml + release.yml), code review (3 High fixed: release atomicity, artifact verification, per-job permissions), merged
-- [ ] Component 11: Installers — design, review, code, review
+- [x] Component 11: Installers — design (1 Critical + 7 High resolved in design review), code (install.sh), code review (3 High fixed: wget TLS, tar path restriction), merged
 
 ## Backlog
 
@@ -222,6 +222,15 @@
 - [ ] Add CI timeout note for E2E tests if flakiness appears (split into separate step)
 - [ ] Add branch protection on `main` requiring CI status check
 - [ ] Pin `cross` Docker images for fully reproducible aarch64-linux builds
+
+### From Component 11 code review (Medium/Low)
+- [ ] Add VERSION env var for version pinning in install.sh
+- [ ] Add specific Darwin-x86_64 case with targeted error message
+- [ ] Add download timeouts (--connect-timeout, --max-time) to curl/wget
+- [ ] Add HUP signal to cleanup trap
+- [ ] Add --help flag to install.sh
+- [ ] Add comment linking tarball name pattern to release.yml
+- [ ] Validate INSTALL_DIR is an absolute path
 
 ### From Component 10 code review (Medium/Low)
 - [ ] Add `--locked` to `cargo clippy` and `cargo test` in ci.yml for consistency with release

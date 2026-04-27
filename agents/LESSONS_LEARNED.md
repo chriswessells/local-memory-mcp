@@ -116,3 +116,13 @@ Capture what went wrong, what surprised us, and what we'd do differently.
 - **Use `gh` CLI instead of third-party release Actions.** `softprops/action-gh-release` is community-maintained with `contents: write` access. The `gh` CLI is pre-installed on all runners and eliminates a supply-chain dependency.
 - **Draft-then-publish pattern for release atomicity.** Create as draft, upload all artifacts, verify count, then publish. Add idempotent cleanup (`gh release delete` before create) so the workflow is re-runnable without manual intervention.
 - **Per-job permissions are more secure than workflow-level.** Build jobs only need `contents: read`; only the release job needs `contents: write`. This limits blast radius if a build step is compromised.
+
+---
+
+## Component 11: Installers
+
+- **Tilde `~` doesn't expand in MCP config.** MCP clients use `execve`/`spawn`, not shell — `~/.local/bin/binary` fails with "file not found". Always print absolute paths in config output.
+- **`main()` wrapper prevents truncated pipe execution.** When piping `curl | bash`, bash executes line-by-line. Wrapping in `main()` called at the end ensures the entire script is downloaded before any logic runs.
+- **wget needs explicit TLS enforcement.** Unlike curl's `--proto '=https' --tlsv1.2`, wget has no HTTPS-only flag in older versions. `--secure-protocol=TLSv1_2` is the closest equivalent.
+- **Restrict tar extraction to expected filenames.** `tar xzf archive.tar.gz binary-name` only extracts the named file, preventing path traversal from malicious archives.
+- **Atomic install = temp-then-rename on target filesystem.** `cp` to `.tmp` in the install dir, then `mv` (atomic rename on same filesystem). Never `mv` across filesystems — it falls back to copy+delete which can leave truncated files.
