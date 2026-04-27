@@ -26,7 +26,7 @@ _(none)_
 - [ ] Component 1: Core DB layer — design, review, code, review
 - [ ] Component 2: Event tools — design, review, code, review
 - [ ] Component 3: Memory tools — design, review, code, review
-- [x] Component 4: Search (FTS5 + vector) — design (2 review rounds, 6 High resolved), code (22 tests), code review pending
+- [x] Component 4: Search (FTS5 + vector) — design (2 review rounds, 6 High resolved), code (22 tests), code review (1 High fixed), merged
 - [ ] Component 5: Session tools (checkpoints, branches) — design, review, code, review
 - [ ] Component 6: Store management tools — design, review, code, review
 - [ ] Component 7: Namespace tools — design, review, code, review
@@ -147,6 +147,16 @@ _(none)_
 - [ ] Document VECTOR_OVERFETCH_FACTOR / MAX_K_OVERFETCH interaction formula in constant doc comments
 - [ ] Add `dist.max(0.0)` guard in vector-only score conversion for defensive coding
 - [ ] Add RRF test case for completely disjoint lists (no overlap)
+
+### From Component 4 code review (Medium/Low)
+- [ ] Add NaN/infinity validation on embedding input in validate_recall_params and search_vector
+- [ ] Extract shared validation helpers (validate_non_empty, validate_max_len) to src/validation.rs
+- [ ] Magic column index 11 for score/distance — define constant or use named column access
+- [ ] Deduplicate mem_params test helper across db.rs, memories.rs, search.rs
+- [ ] Extract shared SQL filter builder for namespace/namespace_prefix/strategy (used in list_memories, search_fts, search_vector)
+- [ ] Add adversarial FTS injection tests (content:secret, hello*, NEAR(a b), a AND b)
+- [ ] Add search_mode field to SearchResult so callers can detect hybrid→vector-only fallback
+- [ ] Add validate_max_len for actor_id in memories.rs get/consolidate/delete for consistency
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)

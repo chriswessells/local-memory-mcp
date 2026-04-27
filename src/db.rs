@@ -901,8 +901,7 @@ impl Db for Connection {
     }
 
     fn search_vector(&self, params: &SearchVectorParams<'_>) -> Result<Vec<(Memory, f64)>, MemoryError> {
-        const OVERFETCH_FACTOR: u32 = 4;
-        const MAX_K: u32 = 1000;
+        use crate::search::{VECTOR_OVERFETCH_FACTOR, MAX_K_OVERFETCH};
 
         if params.embedding.len() != EMBEDDING_DIM as usize {
             return Err(MemoryError::InvalidInput(format!(
@@ -915,7 +914,7 @@ impl Db for Connection {
             .iter()
             .flat_map(|f| f.to_le_bytes())
             .collect();
-        let k_overfetch = (params.limit * OVERFETCH_FACTOR).min(MAX_K);
+        let k_overfetch = (params.limit * VECTOR_OVERFETCH_FACTOR).min(MAX_K_OVERFETCH);
 
         let mut sql = String::from(
             "WITH knn AS (

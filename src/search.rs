@@ -20,12 +20,12 @@ pub const MAX_QUERY_LEN: usize = 4096;
 /// Over-fetch multiplier for vector KNN queries. Since sqlite-vec applies
 /// post-filters after KNN, we request more candidates to compensate for
 /// rows filtered out by actor_id, namespace, strategy, and is_valid.
-const VECTOR_OVERFETCH_FACTOR: u32 = 4;
+pub(crate) const VECTOR_OVERFETCH_FACTOR: u32 = 4;
 
 /// Hard cap on KNN candidates regardless of limit * factor.
 /// k = min(limit * VECTOR_OVERFETCH_FACTOR, MAX_K_OVERFETCH).
 /// Effective overfetch factor drops below VECTOR_OVERFETCH_FACTOR when limit > 250.
-const MAX_K_OVERFETCH: u32 = 1000;
+pub(crate) const MAX_K_OVERFETCH: u32 = 1000;
 
 /// RRF constant from Cormack et al. (2009). Dampens high-rank contributions.
 const RRF_K: f64 = 60.0;

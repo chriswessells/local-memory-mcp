@@ -30,4 +30,5 @@
 | 2026-04-26 | Component 4 | 20 min | Design review round 1: 5 personas, resolved 5 High findings (over-fetch cap, param structs, token cap, query length, silent fallback). Logged 16 Medium/Low to backlog. |
 | 2026-04-26 | Component 4 | 15 min | Design re-review (round 2): 5 personas, resolved 1 High (debug_assert→runtime check for embedding dim), 2 Medium (hybrid fetch_limit cap, score doc). 0 Critical/0 High remaining — design approved. |
 | 2026-04-26 | Component 4 | 25 min | Coding: search.rs (types, constants, sanitize_fts_query, RRF, recall, validation), Db trait methods + impls in db.rs, 22 new tests, 81 total passing |
-| | | **~515 min** | **Total** |
+| 2026-04-26 | Component 4 | 15 min | Code review: 5 personas, fixed 1 High (duplicated overfetch constants → consolidated to search.rs pub(crate)). Medium items logged to backlog. |
+| | | **~530 min** | **Total** |
