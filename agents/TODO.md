@@ -42,6 +42,12 @@
   - [x] Task 4: Final verification (cargo test + cargo clippy)
   - [ ] Additional tests for Components 6, 7, 8 (when implemented)
 
+- [x] Bug fix: Graceful shutdown — signal handler to cleanly close SQLite before exit (design: `design/graceful-shutdown.md`)
+  - [x] Research root cause (POSIX locks released by OS on death; real issue is missing WAL checkpoint/optimize)
+  - [x] Design (`design/graceful-shutdown.md`)
+  - [x] Code (add `shutdown_signal()` + `tokio::select!` + explicit `close_active()` in `main.rs`)
+  - [x] Verify (`cargo check`, `cargo test`, `cargo clippy`, manual SIGTERM test)
+
 ## Planned — Implementation (per-component, each goes through full workflow)
 
 - [ ] Component 6: Session tools (checkpoints, branches) — design, review, code, review
@@ -55,7 +61,6 @@
 
 ### From kiro-graph lessons learned
 - [ ] Error sanitization: sanitize internal errors at MCP response boundary
-- [ ] Graceful shutdown: signal handler to cleanly close SQLite before exit
 - [ ] Observability: add tracing spans for connect, switch, query operations
 - [ ] Disk space warning: log at startup if < 100MB free
 - [ ] Install script checksums: SHA256 verification of downloaded binaries
@@ -241,6 +246,17 @@
 - [ ] Verify `cross` 0.2.5 compatibility with current `ubuntu-latest` runner
 - [ ] Add step names to ci.yml cargo run steps for Actions UI readability
 - [ ] Add top-of-file comments linking to design/ci-cd.md rationale
+
+### From graceful shutdown design review (Medium/Low)
+- [ ] Add WAL checkpoint on startup after unclean shutdown (`PRAGMA wal_checkpoint(TRUNCATE)` in `db::open()`)
+- [ ] Add automated e2e test for shutdown path (spawn binary, send SIGTERM, assert WAL cleanup)
+- [ ] No second-signal force-quit (register handler for immediate exit on second signal)
+- [ ] No MCP-level graceful close notification before transport drop
+
+### From graceful shutdown code review (Medium/Low)
+- [ ] No shutdown timeout on hung cleanup (wrap in `tokio::time::timeout`)
+- [ ] `shutdown_signal()` is untestable/untested (extract to lib crate or add e2e test)
+- [ ] Gate `with_base_dir()` behind `#[cfg(test)]` to prevent production use without security checks
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)

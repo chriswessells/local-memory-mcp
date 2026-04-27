@@ -49,3 +49,4 @@
 | 2026-04-27 | Component 12: Integration & E2E tests | Implementation + code review + fixes | ~45 min |
 | 2026-04-27 | Component 10: CI/CD | Design + design review + code + code review | ~30 min |
 | 2026-04-27 | Component 11: Installers | Design + design review + code + code review | ~25 min |
+| 2026-04-27 | Graceful shutdown bug fix | Research + design + design review (5 personas, 1 Critical + 1 High resolved) + code + code review (5 personas, 1 High + 1 Medium resolved) + merge | ~30 min |
