@@ -161,20 +161,13 @@ fn validate_consolidate_params(action: &ConsolidateAction<'_>) -> Result<(), Mem
 // --- Business logic ---
 
 /// Store an extracted insight as a long-term memory.
-pub fn store_memory(
-    db: &dyn Db,
-    params: &InsertMemoryParams<'_>,
-) -> Result<Memory, MemoryError> {
+pub fn store_memory(db: &dyn Db, params: &InsertMemoryParams<'_>) -> Result<Memory, MemoryError> {
     validate_insert_memory_params(params)?;
     db.insert_memory(params)
 }
 
 /// Get a single memory by ID, scoped to actor.
-pub fn get_memory(
-    db: &dyn Db,
-    actor_id: &str,
-    memory_id: &str,
-) -> Result<Memory, MemoryError> {
+pub fn get_memory(db: &dyn Db, actor_id: &str, memory_id: &str) -> Result<Memory, MemoryError> {
     validate_non_empty(actor_id, "actor_id")?;
     validate_non_empty(memory_id, "memory_id")?;
     db.get_memory(actor_id, memory_id)
@@ -207,11 +200,7 @@ pub fn consolidate_memory(
 }
 
 /// Hard-delete a memory, scoped to actor.
-pub fn delete_memory(
-    db: &dyn Db,
-    actor_id: &str,
-    memory_id: &str,
-) -> Result<(), MemoryError> {
+pub fn delete_memory(db: &dyn Db, actor_id: &str, memory_id: &str) -> Result<(), MemoryError> {
     validate_non_empty(actor_id, "actor_id")?;
     validate_non_empty(memory_id, "memory_id")?;
     db.delete_memory(actor_id, memory_id)
@@ -229,7 +218,11 @@ mod tests {
         (dir, conn)
     }
 
-    fn mem_params<'a>(actor: &'a str, content: &'a str, strategy: &'a str) -> InsertMemoryParams<'a> {
+    fn mem_params<'a>(
+        actor: &'a str,
+        content: &'a str,
+        strategy: &'a str,
+    ) -> InsertMemoryParams<'a> {
         InsertMemoryParams {
             actor_id: actor,
             content,

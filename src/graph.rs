@@ -89,7 +89,9 @@ pub struct UpdateEdgeParams<'a> {
 
 fn validate_non_empty(value: &str, field: &str) -> Result<(), MemoryError> {
     if value.is_empty() {
-        return Err(MemoryError::InvalidInput(format!("{field} must not be empty")));
+        return Err(MemoryError::InvalidInput(format!(
+            "{field} must not be empty"
+        )));
     }
     Ok(())
 }
@@ -121,7 +123,9 @@ fn validate_insert_edge_params(params: &InsertEdgeParams<'_>) -> Result<(), Memo
     validate_non_empty(params.label, "label")?;
     validate_max_len(params.label, MAX_LABEL_LEN, "label")?;
     if params.from_memory_id == params.to_memory_id {
-        return Err(MemoryError::InvalidInput("self-edges are not allowed".into()));
+        return Err(MemoryError::InvalidInput(
+            "self-edges are not allowed".into(),
+        ));
     }
     if let Some(props) = params.properties {
         validate_max_len(props, MAX_PROPERTIES_SIZE, "properties")?;
@@ -251,18 +255,36 @@ mod tests {
     fn test_traverse_clamps_depth() {
         let (_dir, conn) = open_db();
         // Create memories and edge so traverse has something to work with
-        let m1 = conn.insert_memory(&crate::memories::InsertMemoryParams {
-            actor_id: "a1", content: "A", strategy: "semantic",
-            namespace: None, metadata: None, source_session_id: None, embedding: None,
-        }).unwrap();
-        let m2 = conn.insert_memory(&crate::memories::InsertMemoryParams {
-            actor_id: "a1", content: "B", strategy: "semantic",
-            namespace: None, metadata: None, source_session_id: None, embedding: None,
-        }).unwrap();
+        let m1 = conn
+            .insert_memory(&crate::memories::InsertMemoryParams {
+                actor_id: "a1",
+                content: "A",
+                strategy: "semantic",
+                namespace: None,
+                metadata: None,
+                source_session_id: None,
+                embedding: None,
+            })
+            .unwrap();
+        let m2 = conn
+            .insert_memory(&crate::memories::InsertMemoryParams {
+                actor_id: "a1",
+                content: "B",
+                strategy: "semantic",
+                namespace: None,
+                metadata: None,
+                source_session_id: None,
+                embedding: None,
+            })
+            .unwrap();
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &m1.id,
+            to_memory_id: &m2.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
 
         // Depth 100 should be clamped to MAX_TRAVERSE_DEPTH (5)
         let nodes = traverse(&conn, "a1", &m1.id, 100, None, Direction::Out).unwrap();

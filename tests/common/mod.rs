@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
-use std::sync::{Arc, Mutex};
-use tempfile::TempDir;
 use local_memory_mcp::store::StoreManager;
 use local_memory_mcp::tools::MemoryServer;
+use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 
 pub fn setup() -> (TempDir, MemoryServer) {
     let dir = TempDir::new().unwrap();

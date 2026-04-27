@@ -31,7 +31,11 @@ fn spawn_server(base_dir: &Path) -> ServerProcess {
 
     let stdin = Some(BufWriter::new(child.stdin.take().unwrap()));
     let stdout = BufReader::new(child.stdout.take().unwrap());
-    ServerProcess { child, stdin, stdout }
+    ServerProcess {
+        child,
+        stdin,
+        stdout,
+    }
 }
 
 async fn send_request(proc: &mut ServerProcess, id: u64, method: &str, params: Value) {
@@ -70,11 +74,16 @@ async fn read_response(proc: &mut ServerProcess, expected_id: u64) -> Value {
 }
 
 async fn mcp_initialize(proc: &mut ServerProcess) -> Value {
-    send_request(proc, 1, "initialize", json!({
-        "protocolVersion": "2025-03-26",
-        "capabilities": {},
-        "clientInfo": {"name": "test", "version": "0.1.0"}
-    }))
+    send_request(
+        proc,
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "0.1.0"}
+        }),
+    )
     .await;
     let resp = read_response(proc, 1).await;
     send_notification(proc, "notifications/initialized").await;
@@ -103,56 +112,119 @@ async fn test_e2e_mcp_lifecycle() {
     send_request(&mut proc, 2, "tools/list", json!({})).await;
     let resp = read_response(&mut proc, 2).await;
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert!(tools.len() >= 22, "expected at least 22 tools, got {}", tools.len());
+    assert!(
+        tools.len() >= 22,
+        "expected at least 22 tools, got {}",
+        tools.len()
+    );
     // Spot-check memory.add_event has actor_id required
-    let add_event_tool = tools.iter().find(|t| t["name"] == "memory.add_event").unwrap();
-    let required = add_event_tool["inputSchema"]["required"].as_array().unwrap();
+    let add_event_tool = tools
+        .iter()
+        .find(|t| t["name"] == "memory.add_event")
+        .unwrap();
+    let required = add_event_tool["inputSchema"]["required"]
+        .as_array()
+        .unwrap();
     assert!(required.iter().any(|r| r == "actor_id"));
 
     // tools/call: memory.add_event
-    send_request(&mut proc, 3, "tools/call", tool_call_params("memory.add_event", json!({
-        "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
-        "role": "user", "content": "e2e test"
-    }))).await;
+    send_request(
+        &mut proc,
+        3,
+        "tools/call",
+        tool_call_params(
+            "memory.add_event",
+            json!({
+                "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
+                "role": "user", "content": "e2e test"
+            }),
+        ),
+    )
+    .await;
     let resp = read_response(&mut proc, 3).await;
     let ev = extract_tool_text(&resp);
     assert!(ev["id"].is_string());
 
     // tools/call: memory.store
-    send_request(&mut proc, 4, "tools/call", tool_call_params("memory.store", json!({
-        "actor_id": "a1", "content": "e2e memory", "strategy": "core"
-    }))).await;
+    send_request(
+        &mut proc,
+        4,
+        "tools/call",
+        tool_call_params(
+            "memory.store",
+            json!({
+                "actor_id": "a1", "content": "e2e memory", "strategy": "core"
+            }),
+        ),
+    )
+    .await;
     let resp = read_response(&mut proc, 4).await;
     let mem = extract_tool_text(&resp);
     let mem_id = mem["id"].as_str().unwrap().to_string();
 
     // tools/call: memory.recall
-    send_request(&mut proc, 5, "tools/call", tool_call_params("memory.recall", json!({
-        "actor_id": "a1", "query": "e2e"
-    }))).await;
+    send_request(
+        &mut proc,
+        5,
+        "tools/call",
+        tool_call_params(
+            "memory.recall",
+            json!({
+                "actor_id": "a1", "query": "e2e"
+            }),
+        ),
+    )
+    .await;
     let resp = read_response(&mut proc, 5).await;
     let results = extract_tool_text(&resp);
     assert!(!results.as_array().unwrap().is_empty());
 
     // tools/call: graph.add_edge (need two memories)
-    send_request(&mut proc, 6, "tools/call", tool_call_params("memory.store", json!({
-        "actor_id": "a1", "content": "second memory", "strategy": "core"
-    }))).await;
+    send_request(
+        &mut proc,
+        6,
+        "tools/call",
+        tool_call_params(
+            "memory.store",
+            json!({
+                "actor_id": "a1", "content": "second memory", "strategy": "core"
+            }),
+        ),
+    )
+    .await;
     let resp = read_response(&mut proc, 6).await;
     let mem2_id = extract_tool_text(&resp)["id"].as_str().unwrap().to_string();
 
-    send_request(&mut proc, 7, "tools/call", tool_call_params("graph.add_edge", json!({
-        "actor_id": "a1", "from_memory_id": mem_id, "to_memory_id": mem2_id, "label": "test"
-    }))).await;
+    send_request(
+        &mut proc,
+        7,
+        "tools/call",
+        tool_call_params(
+            "graph.add_edge",
+            json!({
+                "actor_id": "a1", "from_memory_id": mem_id, "to_memory_id": mem2_id, "label": "test"
+            }),
+        ),
+    )
+    .await;
     let resp = read_response(&mut proc, 7).await;
     let edge = extract_tool_text(&resp);
     assert!(edge["id"].is_string());
 
     // tools/call with invalid params → isError: true
-    send_request(&mut proc, 8, "tools/call", tool_call_params("memory.add_event", json!({
-        "actor_id": "", "session_id": "s1", "event_type": "conversation",
-        "role": "user", "content": "bad"
-    }))).await;
+    send_request(
+        &mut proc,
+        8,
+        "tools/call",
+        tool_call_params(
+            "memory.add_event",
+            json!({
+                "actor_id": "", "session_id": "s1", "event_type": "conversation",
+                "role": "user", "content": "bad"
+            }),
+        ),
+    )
+    .await;
     let resp = read_response(&mut proc, 8).await;
     assert_eq!(resp["result"]["isError"], true);
 
@@ -176,7 +248,9 @@ async fn test_e2e_stderr_logging() {
         let mut lines = Vec::new();
         let mut line = String::new();
         while let Ok(Ok(n)) = timeout(Duration::from_secs(3), stderr.read_line(&mut line)).await {
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             lines.push(std::mem::take(&mut line));
         }
         lines
@@ -184,9 +258,18 @@ async fn test_e2e_stderr_logging() {
 
     // Initialize + one tool call
     mcp_initialize(&mut proc).await;
-    send_request(&mut proc, 2, "tools/call", tool_call_params("memory.store", json!({
-        "actor_id": "a1", "content": "log test", "strategy": "core"
-    }))).await;
+    send_request(
+        &mut proc,
+        2,
+        "tools/call",
+        tool_call_params(
+            "memory.store",
+            json!({
+                "actor_id": "a1", "content": "log test", "strategy": "core"
+            }),
+        ),
+    )
+    .await;
     let resp = read_response(&mut proc, 2).await;
     // Verify stdout is valid JSON
     let text = resp["result"]["content"][0]["text"].as_str().unwrap();

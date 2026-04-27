@@ -1,11 +1,14 @@
+use crate::error::MemoryError;
+use crate::events::{BranchFilter, Event, GetEventsParams, InsertEventParams, SessionInfo};
+use crate::graph::{
+    ConnectedMemory, Direction, Edge, GraphStats, InsertEdgeParams, LabelCount, Neighbor,
+    TraversalNode, UpdateEdgeParams,
+};
+use crate::memories::{ConsolidateAction, InsertMemoryParams, ListMemoriesParams, Memory};
+use crate::search::{SearchFtsParams, SearchVectorParams};
 use rusqlite::Connection;
 use std::path::Path;
 use std::sync::OnceLock;
-use crate::error::MemoryError;
-use crate::events::{BranchFilter, Event, GetEventsParams, InsertEventParams, SessionInfo};
-use crate::graph::{ConnectedMemory, Direction, Edge, GraphStats, InsertEdgeParams, LabelCount, Neighbor, TraversalNode, UpdateEdgeParams};
-use crate::memories::{ConsolidateAction, InsertMemoryParams, ListMemoriesParams, Memory};
-use crate::search::{SearchFtsParams, SearchVectorParams};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const EMBEDDING_DIM: u32 = 384;
@@ -19,15 +22,16 @@ fn ensure_sqlite_vec() -> Result<(), MemoryError> {
         // valid only for sqlite-vec =0.1.7-alpha.10 with rusqlite =0.35.0.
         // Any version bump of either crate requires re-verifying this cast.
         unsafe {
-            use rusqlite::auto_extension::{RawAutoExtension, register_auto_extension};
+            use rusqlite::auto_extension::{register_auto_extension, RawAutoExtension};
             use sqlite_vec::sqlite3_vec_init;
             let raw: RawAutoExtension = std::mem::transmute(sqlite3_vec_init as *const ());
             register_auto_extension(raw).map_err(|e| e.to_string())
         }
     });
-    result.as_ref().map(|_| ()).map_err(|e| MemoryError::SchemaError(
-        format!("failed to register sqlite-vec: {e}")
-    ))
+    result
+        .as_ref()
+        .map(|_| ())
+        .map_err(|e| MemoryError::SchemaError(format!("failed to register sqlite-vec: {e}")))
 }
 
 pub fn open(path: &Path) -> Result<Connection, MemoryError> {
@@ -53,37 +57,42 @@ pub fn open(path: &Path) -> Result<Connection, MemoryError> {
          PRAGMA wal_autocheckpoint = 1000;
          PRAGMA journal_size_limit = 67108864;
          PRAGMA locking_mode = EXCLUSIVE;"
-    )).map_err(|e| {
+    ))
+    .map_err(|e| {
         tracing::error!("Pragma setup failed: {e}");
         MemoryError::ConnectionFailed("failed to configure database".into())
     })?;
 
     // Force EXCLUSIVE lock acquisition
-    conn.execute_batch("BEGIN IMMEDIATE; COMMIT;").map_err(|e| {
-        if let rusqlite::Error::SqliteFailure(ref err, _) = e {
-            if err.code == rusqlite::ErrorCode::DatabaseBusy {
-                return MemoryError::StoreLocked(path.display().to_string());
+    conn.execute_batch("BEGIN IMMEDIATE; COMMIT;")
+        .map_err(|e| {
+            if let rusqlite::Error::SqliteFailure(ref err, _) = e {
+                if err.code == rusqlite::ErrorCode::DatabaseBusy {
+                    return MemoryError::StoreLocked(path.display().to_string());
+                }
             }
-        }
-        tracing::error!("Lock acquisition failed: {e}");
-        MemoryError::ConnectionFailed("failed to acquire database lock".into())
-    })?;
+            tracing::error!("Lock acquisition failed: {e}");
+            MemoryError::ConnectionFailed("failed to acquire database lock".into())
+        })?;
 
     // sqlite-vec smoke test
-    conn.query_row("SELECT vec_version()", [], |_| Ok(())).map_err(|e| {
-        tracing::error!("sqlite-vec smoke test failed: {e}");
-        MemoryError::SchemaError("sqlite-vec extension not functional".into())
-    })?;
+    conn.query_row("SELECT vec_version()", [], |_| Ok(()))
+        .map_err(|e| {
+            tracing::error!("sqlite-vec smoke test failed: {e}");
+            MemoryError::SchemaError("sqlite-vec extension not functional".into())
+        })?;
 
     // Integrity check for pre-existing databases only
-    let user_version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))
+    let user_version: u32 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| {
             tracing::error!("user_version query failed: {e}");
             MemoryError::QueryFailed("failed to read schema version".into())
         })?;
 
     if user_version > 0 {
-        let check: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))
+        let check: String = conn
+            .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(|e| {
                 tracing::error!("quick_check failed: {e}");
                 MemoryError::QueryFailed("integrity check failed".into())
@@ -99,7 +108,8 @@ pub fn open(path: &Path) -> Result<Connection, MemoryError> {
 }
 
 pub fn migrate(conn: &mut Connection) -> Result<(), MemoryError> {
-    let version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| {
             tracing::error!("user_version read failed: {e}");
             MemoryError::SchemaError("failed to read schema version".into())
@@ -231,16 +241,18 @@ fn migrate_v1(conn: &mut Connection) -> Result<(), MemoryError> {
     })?;
 
     // user_version is not transactional in SQLite — set after successful commit
-    conn.pragma_update(None, "user_version", 1u32).map_err(|e| {
-        tracing::error!("Failed to set user_version: {e}");
-        MemoryError::SchemaError("failed to record migration version".into())
-    })?;
+    conn.pragma_update(None, "user_version", 1u32)
+        .map_err(|e| {
+            tracing::error!("Failed to set user_version: {e}");
+            MemoryError::SchemaError("failed to record migration version".into())
+        })?;
 
     // Post-migration verification — confirm tables exist
-    conn.prepare("SELECT 1 FROM memories LIMIT 0").map_err(|e| {
-        tracing::error!("Post-migration verification failed: {e}");
-        MemoryError::SchemaError("migration verification failed".into())
-    })?;
+    conn.prepare("SELECT 1 FROM memories LIMIT 0")
+        .map_err(|e| {
+            tracing::error!("Post-migration verification failed: {e}");
+            MemoryError::SchemaError("migration verification failed".into())
+        })?;
 
     Ok(())
 }
@@ -313,7 +325,10 @@ pub trait Db {
     /// Vector similarity search over memory embeddings via sqlite-vec.
     /// Returns memories ordered by L2 distance (ascending, lower = closer).
     /// Callers must convert distance to similarity if needed.
-    fn search_vector(&self, params: &SearchVectorParams<'_>) -> Result<Vec<(Memory, f64)>, MemoryError>;
+    fn search_vector(
+        &self,
+        params: &SearchVectorParams<'_>,
+    ) -> Result<Vec<(Memory, f64)>, MemoryError>;
 
     // -- Graph (Component 5) --
 
@@ -401,7 +416,9 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
 
 /// Escape LIKE wildcards in a string for safe prefix matching.
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
@@ -458,12 +475,15 @@ fn row_to_traversal_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<TraversalN
         created_at: row.get(12)?,
         updated_at: row.get(13)?,
     };
-    Ok(TraversalNode { memory, depth, path })
+    Ok(TraversalNode {
+        memory,
+        depth,
+        path,
+    })
 }
 
 // Static SQL for traverse — one per direction. Label clause appended optionally.
-const SQL_TRAVERSE_OUT: &str =
-    "WITH RECURSIVE graph_walk(memory_id, depth, path, visited) AS (
+const SQL_TRAVERSE_OUT: &str = "WITH RECURSIVE graph_walk(memory_id, depth, path, visited) AS (
         SELECT :start_memory_id, 0, '[]', json_array(:start_memory_id)
         UNION ALL
         SELECT e.to_memory_id,
@@ -479,8 +499,7 @@ const SQL_TRAVERSE_OUT: &str =
               SELECT 1 FROM json_each(gw.visited) WHERE value = e.to_memory_id
           )";
 
-const SQL_TRAVERSE_IN: &str =
-    "WITH RECURSIVE graph_walk(memory_id, depth, path, visited) AS (
+const SQL_TRAVERSE_IN: &str = "WITH RECURSIVE graph_walk(memory_id, depth, path, visited) AS (
         SELECT :start_memory_id, 0, '[]', json_array(:start_memory_id)
         UNION ALL
         SELECT e.from_memory_id,
@@ -513,8 +532,7 @@ const SQL_TRAVERSE_BOTH: &str =
               SELECT 1 FROM json_each(gw.visited) WHERE value = CASE WHEN e.from_memory_id = gw.memory_id THEN e.to_memory_id ELSE e.from_memory_id END
           )";
 
-const SQL_TRAVERSE_TAIL: &str =
-    ")
+const SQL_TRAVERSE_TAIL: &str = ")
      SELECT gw.memory_id, gw.depth, gw.path,
             m.id, m.actor_id, m.namespace, m.strategy, m.content, m.metadata,
             m.source_session_id, m.is_valid, m.superseded_by, m.created_at, m.updated_at
@@ -526,12 +544,14 @@ const SQL_TRAVERSE_TAIL: &str =
 
 impl Db for Connection {
     fn db_size(&self) -> Result<u64, MemoryError> {
-        let page_count: u64 = self.pragma_query_value(None, "page_count", |r| r.get(0))
+        let page_count: u64 = self
+            .pragma_query_value(None, "page_count", |r| r.get(0))
             .map_err(|e| {
                 tracing::error!("page_count query failed: {e}");
                 MemoryError::QueryFailed("failed to query database size".into())
             })?;
-        let page_size: u64 = self.pragma_query_value(None, "page_size", |r| r.get(0))
+        let page_size: u64 = self
+            .pragma_query_value(None, "page_size", |r| r.get(0))
             .map_err(|e| {
                 tracing::error!("page_size query failed: {e}");
                 MemoryError::QueryFailed("failed to query database size".into())
@@ -746,7 +766,8 @@ impl Db for Connection {
             tx.execute(
                 "INSERT INTO memory_vec (memory_id, embedding) VALUES (:id, :embedding)",
                 rusqlite::named_params! { ":id": memory.id, ":embedding": emb_bytes },
-            ).map_err(|e| {
+            )
+            .map_err(|e| {
                 tracing::error!("insert_memory embedding failed: {e}");
                 MemoryError::QueryFailed("failed to insert embedding".into())
             })?;
@@ -787,7 +808,8 @@ impl Db for Connection {
              FROM memories WHERE id = :id AND actor_id = :actor_id",
             rusqlite::named_params! { ":id": memory_id, ":actor_id": actor_id },
             row_to_memory,
-        ).map_err(|e| match e {
+        )
+        .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(memory_id.to_string()),
             _ => {
                 tracing::error!("get_memory failed: {e}");
@@ -812,7 +834,10 @@ impl Db for Connection {
         if let Some(prefix) = params.namespace_prefix {
             let escaped = format!("{}%", escape_like(prefix));
             bind_values.push(Box::new(escaped));
-            sql.push_str(&format!(" AND namespace LIKE ?{} ESCAPE '\\'", bind_values.len()));
+            sql.push_str(&format!(
+                " AND namespace LIKE ?{} ESCAPE '\\'",
+                bind_values.len()
+            ));
         }
         if let Some(strategy) = params.strategy {
             bind_values.push(Box::new(strategy.to_string()));
@@ -826,7 +851,9 @@ impl Db for Connection {
         let limit_idx = bind_values.len();
         bind_values.push(Box::new(params.offset));
         let offset_idx = bind_values.len();
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        ));
 
         let mut stmt = self.prepare(&sql).map_err(|e| {
             tracing::error!("list_memories prepare failed: {e}");
@@ -835,10 +862,12 @@ impl Db for Connection {
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             bind_values.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt.query_map(param_refs.as_slice(), row_to_memory).map_err(|e| {
-            tracing::error!("list_memories query failed: {e}");
-            MemoryError::QueryFailed("failed to query memories".into())
-        })?;
+        let rows = stmt
+            .query_map(param_refs.as_slice(), row_to_memory)
+            .map_err(|e| {
+                tracing::error!("list_memories query failed: {e}");
+                MemoryError::QueryFailed("failed to query memories".into())
+            })?;
 
         let mut memories = Vec::new();
         for row in rows {
@@ -967,13 +996,15 @@ impl Db for Connection {
         })?;
 
         // Delete from memories first (verifies actor ownership)
-        let count = tx.execute(
-            "DELETE FROM memories WHERE id = :id AND actor_id = :actor_id",
-            rusqlite::named_params! { ":id": memory_id, ":actor_id": actor_id },
-        ).map_err(|e| {
-            tracing::error!("delete_memory failed: {e}");
-            MemoryError::QueryFailed("failed to delete memory".into())
-        })?;
+        let count = tx
+            .execute(
+                "DELETE FROM memories WHERE id = :id AND actor_id = :actor_id",
+                rusqlite::named_params! { ":id": memory_id, ":actor_id": actor_id },
+            )
+            .map_err(|e| {
+                tracing::error!("delete_memory failed: {e}");
+                MemoryError::QueryFailed("failed to delete memory".into())
+            })?;
 
         if count == 0 {
             return Err(MemoryError::NotFound(memory_id.to_string()));
@@ -983,7 +1014,8 @@ impl Db for Connection {
         tx.execute(
             "DELETE FROM memory_vec WHERE memory_id = :id",
             rusqlite::named_params! { ":id": memory_id },
-        ).map_err(|e| {
+        )
+        .map_err(|e| {
             tracing::error!("delete_memory embedding failed: {e}");
             MemoryError::QueryFailed("failed to delete embedding".into())
         })?;
@@ -1020,7 +1052,10 @@ impl Db for Connection {
         }
         if let Some(prefix) = params.namespace_prefix {
             bind.push(Box::new(format!("{}%", escape_like(prefix))));
-            sql.push_str(&format!(" AND m.namespace LIKE ?{} ESCAPE '\\'", bind.len()));
+            sql.push_str(&format!(
+                " AND m.namespace LIKE ?{} ESCAPE '\\'",
+                bind.len()
+            ));
         }
         if let Some(s) = params.strategy {
             bind.push(Box::new(s.to_string()));
@@ -1055,8 +1090,11 @@ impl Db for Connection {
         Ok(results)
     }
 
-    fn search_vector(&self, params: &SearchVectorParams<'_>) -> Result<Vec<(Memory, f64)>, MemoryError> {
-        use crate::search::{VECTOR_OVERFETCH_FACTOR, MAX_K_OVERFETCH};
+    fn search_vector(
+        &self,
+        params: &SearchVectorParams<'_>,
+    ) -> Result<Vec<(Memory, f64)>, MemoryError> {
+        use crate::search::{MAX_K_OVERFETCH, VECTOR_OVERFETCH_FACTOR};
 
         if params.embedding.len() != EMBEDDING_DIM as usize {
             return Err(MemoryError::InvalidInput(format!(
@@ -1102,7 +1140,10 @@ impl Db for Connection {
         }
         if let Some(prefix) = params.namespace_prefix {
             bind.push(Box::new(format!("{}%", escape_like(prefix))));
-            sql.push_str(&format!(" AND m.namespace LIKE ?{} ESCAPE '\\'", bind.len()));
+            sql.push_str(&format!(
+                " AND m.namespace LIKE ?{} ESCAPE '\\'",
+                bind.len()
+            ));
         }
         if let Some(s) = params.strategy {
             bind.push(Box::new(s.to_string()));
@@ -1169,7 +1210,8 @@ impl Db for Connection {
                 ":properties": params.properties,
             },
             row_to_edge,
-        ).map_err(|e| {
+        )
+        .map_err(|e| {
             tracing::error!("insert_edge failed: {e}");
             MemoryError::QueryFailed("failed to insert edge".into())
         })
@@ -1183,7 +1225,8 @@ impl Db for Connection {
              WHERE e.id = :edge_id AND m.actor_id = :actor_id",
             rusqlite::named_params! { ":edge_id": edge_id, ":actor_id": actor_id },
             row_to_edge,
-        ).map_err(|e| match e {
+        )
+        .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(edge_id.to_string()),
             _ => {
                 tracing::error!("get_edge failed: {e}");
@@ -1261,7 +1304,8 @@ impl Db for Connection {
                 },
                 row_to_neighbor,
             )
-        }.map_err(|e| {
+        }
+        .map_err(|e| {
             tracing::error!("get_neighbors query failed: {e}");
             MemoryError::QueryFailed("failed to query neighbors".into())
         })?;
@@ -1289,8 +1333,11 @@ impl Db for Connection {
             "SELECT 1 FROM memories WHERE id = :id AND actor_id = :actor_id",
             rusqlite::named_params! { ":id": start_memory_id, ":actor_id": actor_id },
             |_| Ok(()),
-        ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(start_memory_id.to_string()),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                MemoryError::NotFound(start_memory_id.to_string())
+            }
             _ => {
                 tracing::error!("traverse verify failed: {e}");
                 MemoryError::QueryFailed("failed to verify start memory".into())
@@ -1333,7 +1380,8 @@ impl Db for Connection {
                 },
                 row_to_traversal_node,
             )
-        }.map_err(|e| {
+        }
+        .map_err(|e| {
             tracing::error!("traverse query failed: {e}");
             MemoryError::QueryFailed("failed to execute traverse".into())
         })?;
@@ -1397,7 +1445,9 @@ impl Db for Connection {
         };
 
         result.map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(params.edge_id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => {
+                MemoryError::NotFound(params.edge_id.to_string())
+            }
             _ => {
                 tracing::error!("update_edge failed: {e}");
                 MemoryError::QueryFailed("failed to update edge".into())
@@ -1422,28 +1472,30 @@ impl Db for Connection {
     }
 
     fn list_edge_labels(&self, actor_id: &str) -> Result<Vec<LabelCount>, MemoryError> {
-        let mut stmt = self.prepare(
-            "SELECT e.label, COUNT(*) as count
+        let mut stmt = self
+            .prepare(
+                "SELECT e.label, COUNT(*) as count
              FROM knowledge_edges e
              JOIN memories m ON m.id = e.from_memory_id
              WHERE m.actor_id = :actor_id
-             GROUP BY e.label ORDER BY count DESC"
-        ).map_err(|e| {
-            tracing::error!("list_edge_labels prepare failed: {e}");
-            MemoryError::QueryFailed("failed to prepare list_edge_labels query".into())
-        })?;
+             GROUP BY e.label ORDER BY count DESC",
+            )
+            .map_err(|e| {
+                tracing::error!("list_edge_labels prepare failed: {e}");
+                MemoryError::QueryFailed("failed to prepare list_edge_labels query".into())
+            })?;
 
-        let rows = stmt.query_map(
-            rusqlite::named_params! { ":actor_id": actor_id },
-            |row| {
-            Ok(LabelCount {
-                label: row.get(0)?,
-                count: row.get(1)?,
+        let rows = stmt
+            .query_map(rusqlite::named_params! { ":actor_id": actor_id }, |row| {
+                Ok(LabelCount {
+                    label: row.get(0)?,
+                    count: row.get(1)?,
+                })
             })
-        }).map_err(|e| {
-            tracing::error!("list_edge_labels query failed: {e}");
-            MemoryError::QueryFailed("failed to query edge labels".into())
-        })?;
+            .map_err(|e| {
+                tracing::error!("list_edge_labels query failed: {e}");
+                MemoryError::QueryFailed("failed to query edge labels".into())
+            })?;
 
         let mut labels = Vec::new();
         for row in rows {
@@ -1456,21 +1508,24 @@ impl Db for Connection {
     }
 
     fn graph_stats(&self, actor_id: &str) -> Result<GraphStats, MemoryError> {
-        let total_edges: u64 = self.query_row(
-            "SELECT COUNT(*) FROM knowledge_edges e
+        let total_edges: u64 = self
+            .query_row(
+                "SELECT COUNT(*) FROM knowledge_edges e
              JOIN memories m ON m.id = e.from_memory_id
              WHERE m.actor_id = :actor_id",
-            rusqlite::named_params! { ":actor_id": actor_id },
-            |row| row.get(0),
-        ).map_err(|e| {
-            tracing::error!("graph_stats count failed: {e}");
-            MemoryError::QueryFailed("failed to count edges".into())
-        })?;
+                rusqlite::named_params! { ":actor_id": actor_id },
+                |row| row.get(0),
+            )
+            .map_err(|e| {
+                tracing::error!("graph_stats count failed: {e}");
+                MemoryError::QueryFailed("failed to count edges".into())
+            })?;
 
         let labels = self.list_edge_labels(actor_id)?;
 
-        let mut stmt = self.prepare(
-            "SELECT memory_id, COUNT(*) as edge_count FROM (
+        let mut stmt = self
+            .prepare(
+                "SELECT memory_id, COUNT(*) as edge_count FROM (
                  SELECT e.from_memory_id AS memory_id FROM knowledge_edges e
                  JOIN memories m ON m.id = e.from_memory_id WHERE m.actor_id = :actor_id
                  UNION ALL
@@ -1479,23 +1534,24 @@ impl Db for Connection {
              )
              GROUP BY memory_id
              ORDER BY edge_count DESC
-             LIMIT 10"
-        ).map_err(|e| {
-            tracing::error!("graph_stats most_connected prepare failed: {e}");
-            MemoryError::QueryFailed("failed to prepare most_connected query".into())
-        })?;
+             LIMIT 10",
+            )
+            .map_err(|e| {
+                tracing::error!("graph_stats most_connected prepare failed: {e}");
+                MemoryError::QueryFailed("failed to prepare most_connected query".into())
+            })?;
 
-        let rows = stmt.query_map(
-            rusqlite::named_params! { ":actor_id": actor_id },
-            |row| {
-            Ok(ConnectedMemory {
-                memory_id: row.get(0)?,
-                edge_count: row.get(1)?,
+        let rows = stmt
+            .query_map(rusqlite::named_params! { ":actor_id": actor_id }, |row| {
+                Ok(ConnectedMemory {
+                    memory_id: row.get(0)?,
+                    edge_count: row.get(1)?,
+                })
             })
-        }).map_err(|e| {
-            tracing::error!("graph_stats most_connected query failed: {e}");
-            MemoryError::QueryFailed("failed to query most connected".into())
-        })?;
+            .map_err(|e| {
+                tracing::error!("graph_stats most_connected query failed: {e}");
+                MemoryError::QueryFailed("failed to query most connected".into())
+            })?;
 
         let mut most_connected = Vec::new();
         for row in rows {
@@ -1505,7 +1561,11 @@ impl Db for Connection {
             })?);
         }
 
-        Ok(GraphStats { total_edges, labels, most_connected })
+        Ok(GraphStats {
+            total_edges,
+            labels,
+            most_connected,
+        })
     }
 }
 
@@ -1536,28 +1596,36 @@ mod tests {
     #[test]
     fn test_open_wal_mode() {
         let (_dir, conn) = open_temp();
-        let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0)).unwrap();
+        let mode: String = conn
+            .pragma_query_value(None, "journal_mode", |r| r.get(0))
+            .unwrap();
         assert_eq!(mode, "wal");
     }
 
     #[test]
     fn test_open_foreign_keys() {
         let (_dir, conn) = open_temp();
-        let fk: i32 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
+        let fk: i32 = conn
+            .pragma_query_value(None, "foreign_keys", |r| r.get(0))
+            .unwrap();
         assert_eq!(fk, 1);
     }
 
     #[test]
     fn test_open_exclusive_locking() {
         let (_dir, conn) = open_temp();
-        let mode: String = conn.pragma_query_value(None, "locking_mode", |r| r.get(0)).unwrap();
+        let mode: String = conn
+            .pragma_query_value(None, "locking_mode", |r| r.get(0))
+            .unwrap();
         assert_eq!(mode, "exclusive");
     }
 
     #[test]
     fn test_sqlite_vec_loaded() {
         let (_dir, conn) = open_temp();
-        let version: String = conn.query_row("SELECT vec_version()", [], |r| r.get(0)).unwrap();
+        let version: String = conn
+            .query_row("SELECT vec_version()", [], |r| r.get(0))
+            .unwrap();
         assert!(!version.is_empty());
     }
 
@@ -1565,15 +1633,26 @@ mod tests {
     fn test_migrate_fresh_db() {
         let (_dir, conn) = open_temp();
         let tables: Vec<String> = {
-            let mut stmt = conn.prepare(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            ).unwrap();
-            stmt.query_map([], |r| r.get(0)).unwrap()
+            let mut stmt = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .unwrap();
+            stmt.query_map([], |r| r.get(0))
+                .unwrap()
                 .map(|r| r.unwrap())
                 .collect()
         };
-        for expected in &["events", "memories", "knowledge_edges", "namespaces", "checkpoints", "branches"] {
-            assert!(tables.contains(&expected.to_string()), "missing table: {expected}");
+        for expected in &[
+            "events",
+            "memories",
+            "knowledge_edges",
+            "namespaces",
+            "checkpoints",
+            "branches",
+        ] {
+            assert!(
+                tables.contains(&expected.to_string()),
+                "missing table: {expected}"
+            );
         }
     }
 
@@ -1596,7 +1675,10 @@ mod tests {
             conn.pragma_update(None, "user_version", 999u32).unwrap();
         }
         let result = open(&path);
-        assert!(matches!(result, Err(MemoryError::SchemaVersionTooNew(999, 1))));
+        assert!(matches!(
+            result,
+            Err(MemoryError::SchemaVersionTooNew(999, 1))
+        ));
     }
 
     #[test]
@@ -1606,11 +1688,13 @@ mod tests {
             "INSERT INTO memories (id, actor_id, strategy, content) VALUES ('m1', 'a1', 'semantic', 'hello world')",
             [],
         ).unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT count(*) FROM memory_fts WHERE memory_fts MATCH 'hello'",
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memory_fts WHERE memory_fts MATCH 'hello'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -1632,7 +1716,9 @@ mod tests {
             .spawn();
 
         // If we can't spawn (e.g., CI sandbox), skip gracefully
-        let Ok(mut child) = child else { return; };
+        let Ok(mut child) = child else {
+            return;
+        };
 
         // The child won't actually hold the lock via test runner, so instead
         // test the error mapping directly: simulate SQLITE_BUSY on BEGIN IMMEDIATE
@@ -1642,7 +1728,9 @@ mod tests {
         // Direct unit test of the error path: open a connection with a raw SQLite lock
         use rusqlite::Connection as RawConn;
         let holder = RawConn::open(&path).unwrap();
-        holder.execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN IMMEDIATE;").unwrap();
+        holder
+            .execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN IMMEDIATE;")
+            .unwrap();
         // holder now has an exclusive write lock
 
         let result = open(&path);
@@ -1658,7 +1746,11 @@ mod tests {
 
     // -- Event tests (Component 2) --
 
-    fn conv_params<'a>(actor: &'a str, session: &'a str, content: &'a str) -> InsertEventParams<'a> {
+    fn conv_params<'a>(
+        actor: &'a str,
+        session: &'a str,
+        content: &'a str,
+    ) -> InsertEventParams<'a> {
         InsertEventParams {
             actor_id: actor,
             session_id: session,
@@ -1675,7 +1767,9 @@ mod tests {
     #[test]
     fn test_insert_and_get_event() {
         let (_dir, conn) = open_temp();
-        let event = conn.insert_event(&conv_params("actor1", "sess1", "hello")).unwrap();
+        let event = conn
+            .insert_event(&conv_params("actor1", "sess1", "hello"))
+            .unwrap();
         assert_eq!(event.actor_id, "actor1");
         assert_eq!(event.session_id, "sess1");
         assert_eq!(event.event_type, "conversation");
@@ -1699,7 +1793,9 @@ mod tests {
     #[test]
     fn test_get_event_wrong_actor() {
         let (_dir, conn) = open_temp();
-        let event = conn.insert_event(&conv_params("actor1", "sess1", "hello")).unwrap();
+        let event = conn
+            .insert_event(&conv_params("actor1", "sess1", "hello"))
+            .unwrap();
         // Different actor cannot access the event
         let result = conn.get_event("actor2", &event.id);
         assert!(matches!(result, Err(MemoryError::NotFound(_))));
@@ -1709,7 +1805,14 @@ mod tests {
     fn test_get_events_chronological() {
         let (_dir, conn) = open_temp();
         // Insert with explicit timestamps to guarantee ordering
-        for (i, ts) in ["2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z", "2026-01-01T00:00:03Z"].iter().enumerate() {
+        for (i, ts) in [
+            "2026-01-01T00:00:01Z",
+            "2026-01-01T00:00:02Z",
+            "2026-01-01T00:00:03Z",
+        ]
+        .iter()
+        .enumerate()
+        {
             conn.execute(
                 "INSERT INTO events (id, actor_id, session_id, event_type, role, content, created_at)
                  VALUES (?1, 'a1', 's1', 'conversation', 'user', ?2, ?3)",
@@ -1740,25 +1843,47 @@ mod tests {
         conn.insert_event(&InsertEventParams {
             branch_id: Some("branch1"),
             ..conv_params("a1", "s1", "branched")
-        }).unwrap();
+        })
+        .unwrap();
 
-        let all = conn.get_events(&GetEventsParams {
-            actor_id: "a1", session_id: "s1", branch_id: BranchFilter::All,
-            limit: 100, offset: 0, before: None, after: None,
-        }).unwrap();
+        let all = conn
+            .get_events(&GetEventsParams {
+                actor_id: "a1",
+                session_id: "s1",
+                branch_id: BranchFilter::All,
+                limit: 100,
+                offset: 0,
+                before: None,
+                after: None,
+            })
+            .unwrap();
         assert_eq!(all.len(), 2);
 
-        let main_only = conn.get_events(&GetEventsParams {
-            actor_id: "a1", session_id: "s1", branch_id: BranchFilter::MainOnly,
-            limit: 100, offset: 0, before: None, after: None,
-        }).unwrap();
+        let main_only = conn
+            .get_events(&GetEventsParams {
+                actor_id: "a1",
+                session_id: "s1",
+                branch_id: BranchFilter::MainOnly,
+                limit: 100,
+                offset: 0,
+                before: None,
+                after: None,
+            })
+            .unwrap();
         assert_eq!(main_only.len(), 1);
         assert_eq!(main_only[0].content.as_deref(), Some("main"));
 
-        let specific = conn.get_events(&GetEventsParams {
-            actor_id: "a1", session_id: "s1", branch_id: BranchFilter::Specific("branch1"),
-            limit: 100, offset: 0, before: None, after: None,
-        }).unwrap();
+        let specific = conn
+            .get_events(&GetEventsParams {
+                actor_id: "a1",
+                session_id: "s1",
+                branch_id: BranchFilter::Specific("branch1"),
+                limit: 100,
+                offset: 0,
+                before: None,
+                after: None,
+            })
+            .unwrap();
         assert_eq!(specific.len(), 1);
         assert_eq!(specific[0].content.as_deref(), Some("branched"));
     }
@@ -1766,16 +1891,27 @@ mod tests {
     #[test]
     fn test_get_events_time_range() {
         let (_dir, conn) = open_temp();
-        for (i, ts) in ["2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z", "2026-01-01T00:00:03Z"].iter().enumerate() {
+        for (i, ts) in [
+            "2026-01-01T00:00:01Z",
+            "2026-01-01T00:00:02Z",
+            "2026-01-01T00:00:03Z",
+        ]
+        .iter()
+        .enumerate()
+        {
             conn.execute(
                 "INSERT INTO events (id, actor_id, session_id, event_type, content, created_at)
                  VALUES (?1, 'a1', 's1', 'conversation', ?2, ?3)",
                 rusqlite::params![format!("e{i}"), format!("msg{i}"), ts],
-            ).unwrap();
+            )
+            .unwrap();
         }
         let params = GetEventsParams {
-            actor_id: "a1", session_id: "s1", branch_id: BranchFilter::All,
-            limit: 100, offset: 0,
+            actor_id: "a1",
+            session_id: "s1",
+            branch_id: BranchFilter::All,
+            limit: 100,
+            offset: 0,
             before: Some("2026-01-01T00:00:03Z"),
             after: Some("2026-01-01T00:00:01Z"),
         };
@@ -1788,11 +1924,17 @@ mod tests {
     fn test_get_events_limit_offset() {
         let (_dir, conn) = open_temp();
         for i in 0..5 {
-            conn.insert_event(&conv_params("a1", "s1", &format!("msg{i}"))).unwrap();
+            conn.insert_event(&conv_params("a1", "s1", &format!("msg{i}")))
+                .unwrap();
         }
         let params = GetEventsParams {
-            actor_id: "a1", session_id: "s1", branch_id: BranchFilter::All,
-            limit: 2, offset: 1, before: None, after: None,
+            actor_id: "a1",
+            session_id: "s1",
+            branch_id: BranchFilter::All,
+            limit: 2,
+            offset: 1,
+            before: None,
+            after: None,
         };
         let events = conn.get_events(&params).unwrap();
         assert_eq!(events.len(), 2);
@@ -1823,17 +1965,25 @@ mod tests {
         conn.insert_event(&InsertEventParams {
             expires_at: Some("2020-01-01T00:00:00Z"),
             ..conv_params("a1", "s1", "expired")
-        }).unwrap();
+        })
+        .unwrap();
         // Non-expired event
         conn.insert_event(&conv_params("a1", "s1", "keep")).unwrap();
 
         let deleted = conn.delete_expired_events().unwrap();
         assert_eq!(deleted, 1);
 
-        let remaining = conn.get_events(&GetEventsParams {
-            actor_id: "a1", session_id: "s1", branch_id: BranchFilter::All,
-            limit: 100, offset: 0, before: None, after: None,
-        }).unwrap();
+        let remaining = conn
+            .get_events(&GetEventsParams {
+                actor_id: "a1",
+                session_id: "s1",
+                branch_id: BranchFilter::All,
+                limit: 100,
+                offset: 0,
+                before: None,
+                after: None,
+            })
+            .unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].content.as_deref(), Some("keep"));
     }
@@ -1842,17 +1992,19 @@ mod tests {
     fn test_insert_event_blob() {
         let (_dir, conn) = open_temp();
         let blob_data = vec![0u8, 1, 2, 3, 255];
-        let event = conn.insert_event(&InsertEventParams {
-            actor_id: "a1",
-            session_id: "s1",
-            event_type: "blob",
-            role: None,
-            content: None,
-            blob_data: Some(&blob_data),
-            metadata: None,
-            branch_id: None,
-            expires_at: None,
-        }).unwrap();
+        let event = conn
+            .insert_event(&InsertEventParams {
+                actor_id: "a1",
+                session_id: "s1",
+                event_type: "blob",
+                role: None,
+                content: None,
+                blob_data: Some(&blob_data),
+                metadata: None,
+                branch_id: None,
+                expires_at: None,
+            })
+            .unwrap();
         assert_eq!(event.event_type, "blob");
         assert_eq!(event.blob_data.as_deref(), Some(blob_data.as_slice()));
 
@@ -1862,9 +2014,13 @@ mod tests {
 
     // -- Memory tests (Component 3) --
 
-    use crate::memories::{InsertMemoryParams, ListMemoriesParams, ConsolidateAction};
+    use crate::memories::{ConsolidateAction, InsertMemoryParams, ListMemoriesParams};
 
-    fn mem_params<'a>(actor: &'a str, content: &'a str, strategy: &'a str) -> InsertMemoryParams<'a> {
+    fn mem_params<'a>(
+        actor: &'a str,
+        content: &'a str,
+        strategy: &'a str,
+    ) -> InsertMemoryParams<'a> {
         InsertMemoryParams {
             actor_id: actor,
             content,
@@ -1879,7 +2035,9 @@ mod tests {
     #[test]
     fn test_insert_and_get_memory() {
         let (_dir, conn) = open_temp();
-        let memory = conn.insert_memory(&mem_params("actor1", "Rust is great", "semantic")).unwrap();
+        let memory = conn
+            .insert_memory(&mem_params("actor1", "Rust is great", "semantic"))
+            .unwrap();
         assert_eq!(memory.actor_id, "actor1");
         assert_eq!(memory.content, "Rust is great");
         assert_eq!(memory.strategy, "semantic");
@@ -1898,30 +2056,38 @@ mod tests {
     fn test_insert_memory_with_embedding() {
         let (_dir, conn) = open_temp();
         let embedding = vec![0.1f32; 384];
-        let memory = conn.insert_memory(&InsertMemoryParams {
-            embedding: Some(&embedding),
-            ..mem_params("actor1", "with vector", "semantic")
-        }).unwrap();
+        let memory = conn
+            .insert_memory(&InsertMemoryParams {
+                embedding: Some(&embedding),
+                ..mem_params("actor1", "with vector", "semantic")
+            })
+            .unwrap();
 
         // Verify embedding exists in memory_vec
-        let count: i64 = conn.query_row(
-            "SELECT count(*) FROM memory_vec WHERE memory_id = ?1",
-            [&memory.id],
-            |r| r.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memory_vec WHERE memory_id = ?1",
+                [&memory.id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
     }
 
     #[test]
     fn test_insert_memory_default_namespace() {
         let (_dir, conn) = open_temp();
-        let memory = conn.insert_memory(&mem_params("a1", "content", "semantic")).unwrap();
+        let memory = conn
+            .insert_memory(&mem_params("a1", "content", "semantic"))
+            .unwrap();
         assert_eq!(memory.namespace, "default");
 
-        let memory2 = conn.insert_memory(&InsertMemoryParams {
-            namespace: Some("/custom/ns"),
-            ..mem_params("a1", "content2", "semantic")
-        }).unwrap();
+        let memory2 = conn
+            .insert_memory(&InsertMemoryParams {
+                namespace: Some("/custom/ns"),
+                ..mem_params("a1", "content2", "semantic")
+            })
+            .unwrap();
         assert_eq!(memory2.namespace, "/custom/ns");
     }
 
@@ -1935,7 +2101,9 @@ mod tests {
     #[test]
     fn test_get_memory_wrong_actor() {
         let (_dir, conn) = open_temp();
-        let memory = conn.insert_memory(&mem_params("actor1", "content", "semantic")).unwrap();
+        let memory = conn
+            .insert_memory(&mem_params("actor1", "content", "semantic"))
+            .unwrap();
         let result = conn.get_memory("actor2", &memory.id);
         assert!(matches!(result, Err(MemoryError::NotFound(_))));
     }
@@ -1943,14 +2111,24 @@ mod tests {
     #[test]
     fn test_list_memories_by_actor() {
         let (_dir, conn) = open_temp();
-        conn.insert_memory(&mem_params("a1", "m1", "semantic")).unwrap();
-        conn.insert_memory(&mem_params("a1", "m2", "semantic")).unwrap();
-        conn.insert_memory(&mem_params("a2", "m3", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "m1", "semantic"))
+            .unwrap();
+        conn.insert_memory(&mem_params("a1", "m2", "semantic"))
+            .unwrap();
+        conn.insert_memory(&mem_params("a2", "m3", "semantic"))
+            .unwrap();
 
-        let results = conn.list_memories(&ListMemoriesParams {
-            actor_id: "a1", namespace: None, namespace_prefix: None,
-            strategy: None, valid_only: false, limit: 100, offset: 0,
-        }).unwrap();
+        let results = conn
+            .list_memories(&ListMemoriesParams {
+                actor_id: "a1",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                valid_only: false,
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|m| m.actor_id == "a1"));
     }
@@ -1961,16 +2139,25 @@ mod tests {
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/prefs"),
             ..mem_params("a1", "m1", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/facts"),
             ..mem_params("a1", "m2", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
 
-        let results = conn.list_memories(&ListMemoriesParams {
-            actor_id: "a1", namespace: Some("/prefs"), namespace_prefix: None,
-            strategy: None, valid_only: false, limit: 100, offset: 0,
-        }).unwrap();
+        let results = conn
+            .list_memories(&ListMemoriesParams {
+                actor_id: "a1",
+                namespace: Some("/prefs"),
+                namespace_prefix: None,
+                strategy: None,
+                valid_only: false,
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].namespace, "/prefs");
     }
@@ -1981,36 +2168,55 @@ mod tests {
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/user/prefs"),
             ..mem_params("a1", "m1", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/user/facts"),
             ..mem_params("a1", "m2", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/system"),
             ..mem_params("a1", "m3", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
 
-        let results = conn.list_memories(&ListMemoriesParams {
-            actor_id: "a1", namespace: None, namespace_prefix: Some("/user"),
-            strategy: None, valid_only: false, limit: 100, offset: 0,
-        }).unwrap();
+        let results = conn
+            .list_memories(&ListMemoriesParams {
+                actor_id: "a1",
+                namespace: None,
+                namespace_prefix: Some("/user"),
+                strategy: None,
+                valid_only: false,
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // Test LIKE escaping: underscore in prefix should be literal
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/user_data/x"),
             ..mem_params("a1", "m4", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/userXdata/x"),
             ..mem_params("a1", "m5", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
 
-        let results = conn.list_memories(&ListMemoriesParams {
-            actor_id: "a1", namespace: None, namespace_prefix: Some("/user_data"),
-            strategy: None, valid_only: false, limit: 100, offset: 0,
-        }).unwrap();
+        let results = conn
+            .list_memories(&ListMemoriesParams {
+                actor_id: "a1",
+                namespace: None,
+                namespace_prefix: Some("/user_data"),
+                strategy: None,
+                valid_only: false,
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
         // Should match "/user_data/x" but NOT "/userXdata/x"
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].namespace, "/user_data/x");
@@ -2019,13 +2225,22 @@ mod tests {
     #[test]
     fn test_list_memories_by_strategy() {
         let (_dir, conn) = open_temp();
-        conn.insert_memory(&mem_params("a1", "m1", "semantic")).unwrap();
-        conn.insert_memory(&mem_params("a1", "m2", "summary")).unwrap();
+        conn.insert_memory(&mem_params("a1", "m1", "semantic"))
+            .unwrap();
+        conn.insert_memory(&mem_params("a1", "m2", "summary"))
+            .unwrap();
 
-        let results = conn.list_memories(&ListMemoriesParams {
-            actor_id: "a1", namespace: None, namespace_prefix: None,
-            strategy: Some("summary"), valid_only: false, limit: 100, offset: 0,
-        }).unwrap();
+        let results = conn
+            .list_memories(&ListMemoriesParams {
+                actor_id: "a1",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: Some("summary"),
+                valid_only: false,
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].strategy, "summary");
     }
@@ -2033,21 +2248,39 @@ mod tests {
     #[test]
     fn test_list_memories_valid_only() {
         let (_dir, conn) = open_temp();
-        let m = conn.insert_memory(&mem_params("a1", "old", "semantic")).unwrap();
-        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate).unwrap();
-        conn.insert_memory(&mem_params("a1", "valid", "semantic")).unwrap();
+        let m = conn
+            .insert_memory(&mem_params("a1", "old", "semantic"))
+            .unwrap();
+        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate)
+            .unwrap();
+        conn.insert_memory(&mem_params("a1", "valid", "semantic"))
+            .unwrap();
 
-        let valid = conn.list_memories(&ListMemoriesParams {
-            actor_id: "a1", namespace: None, namespace_prefix: None,
-            strategy: None, valid_only: true, limit: 100, offset: 0,
-        }).unwrap();
+        let valid = conn
+            .list_memories(&ListMemoriesParams {
+                actor_id: "a1",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                valid_only: true,
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
         assert_eq!(valid.len(), 1);
         assert_eq!(valid[0].content, "valid");
 
-        let all = conn.list_memories(&ListMemoriesParams {
-            actor_id: "a1", namespace: None, namespace_prefix: None,
-            strategy: None, valid_only: false, limit: 100, offset: 0,
-        }).unwrap();
+        let all = conn
+            .list_memories(&ListMemoriesParams {
+                actor_id: "a1",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                valid_only: false,
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
         assert_eq!(all.len(), 2);
     }
 
@@ -2055,24 +2288,40 @@ mod tests {
     fn test_list_memories_pagination() {
         let (_dir, conn) = open_temp();
         for i in 0..5 {
-            conn.insert_memory(&mem_params("a1", &format!("m{i}"), "semantic")).unwrap();
+            conn.insert_memory(&mem_params("a1", &format!("m{i}"), "semantic"))
+                .unwrap();
         }
-        let results = conn.list_memories(&ListMemoriesParams {
-            actor_id: "a1", namespace: None, namespace_prefix: None,
-            strategy: None, valid_only: false, limit: 2, offset: 1,
-        }).unwrap();
+        let results = conn
+            .list_memories(&ListMemoriesParams {
+                actor_id: "a1",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                valid_only: false,
+                limit: 2,
+                offset: 1,
+            })
+            .unwrap();
         assert_eq!(results.len(), 2);
     }
 
     #[test]
     fn test_consolidate_update() {
         let (_dir, conn) = open_temp();
-        let old = conn.insert_memory(&mem_params("a1", "old content", "semantic")).unwrap();
+        let old = conn
+            .insert_memory(&mem_params("a1", "old content", "semantic"))
+            .unwrap();
 
-        let new = conn.consolidate_memory(
-            "a1", &old.id,
-            &ConsolidateAction::Update { content: "new content", embedding: None },
-        ).unwrap();
+        let new = conn
+            .consolidate_memory(
+                "a1",
+                &old.id,
+                &ConsolidateAction::Update {
+                    content: "new content",
+                    embedding: None,
+                },
+            )
+            .unwrap();
 
         assert_ne!(new.id, old.id);
         assert_eq!(new.content, "new content");
@@ -2089,11 +2338,13 @@ mod tests {
     #[test]
     fn test_consolidate_invalidate() {
         let (_dir, conn) = open_temp();
-        let m = conn.insert_memory(&mem_params("a1", "content", "semantic")).unwrap();
+        let m = conn
+            .insert_memory(&mem_params("a1", "content", "semantic"))
+            .unwrap();
 
-        let invalidated = conn.consolidate_memory(
-            "a1", &m.id, &ConsolidateAction::Invalidate,
-        ).unwrap();
+        let invalidated = conn
+            .consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate)
+            .unwrap();
 
         assert!(!invalidated.is_valid);
         assert_eq!(invalidated.id, m.id);
@@ -2102,8 +2353,11 @@ mod tests {
     #[test]
     fn test_consolidate_already_invalid() {
         let (_dir, conn) = open_temp();
-        let m = conn.insert_memory(&mem_params("a1", "content", "semantic")).unwrap();
-        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate).unwrap();
+        let m = conn
+            .insert_memory(&mem_params("a1", "content", "semantic"))
+            .unwrap();
+        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate)
+            .unwrap();
 
         // Second invalidation should fail
         let result = conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate);
@@ -2114,22 +2368,29 @@ mod tests {
     fn test_delete_memory() {
         let (_dir, conn) = open_temp();
         let embedding = vec![0.1f32; 384];
-        let m = conn.insert_memory(&InsertMemoryParams {
-            embedding: Some(&embedding),
-            ..mem_params("a1", "to delete", "semantic")
-        }).unwrap();
+        let m = conn
+            .insert_memory(&InsertMemoryParams {
+                embedding: Some(&embedding),
+                ..mem_params("a1", "to delete", "semantic")
+            })
+            .unwrap();
 
         conn.delete_memory("a1", &m.id).unwrap();
 
         // Memory should be gone
-        assert!(matches!(conn.get_memory("a1", &m.id), Err(MemoryError::NotFound(_))));
+        assert!(matches!(
+            conn.get_memory("a1", &m.id),
+            Err(MemoryError::NotFound(_))
+        ));
 
         // Embedding should be gone
-        let count: i64 = conn.query_row(
-            "SELECT count(*) FROM memory_vec WHERE memory_id = ?1",
-            [&m.id],
-            |r| r.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memory_vec WHERE memory_id = ?1",
+                [&m.id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -2143,7 +2404,9 @@ mod tests {
     #[test]
     fn test_delete_memory_wrong_actor() {
         let (_dir, conn) = open_temp();
-        let m = conn.insert_memory(&mem_params("actor1", "content", "semantic")).unwrap();
+        let m = conn
+            .insert_memory(&mem_params("actor1", "content", "semantic"))
+            .unwrap();
         let result = conn.delete_memory("actor2", &m.id);
         assert!(matches!(result, Err(MemoryError::NotFound(_))));
     }
@@ -2155,18 +2418,23 @@ mod tests {
     #[test]
     fn test_search_fts_basic() {
         let (_dir, conn) = open_temp();
-        conn.insert_memory(&mem_params("a1", "Rust programming language", "semantic")).unwrap();
-        conn.insert_memory(&mem_params("a1", "Python scripting", "semantic")).unwrap();
-        conn.insert_memory(&mem_params("a1", "Go concurrency", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "Rust programming language", "semantic"))
+            .unwrap();
+        conn.insert_memory(&mem_params("a1", "Python scripting", "semantic"))
+            .unwrap();
+        conn.insert_memory(&mem_params("a1", "Go concurrency", "semantic"))
+            .unwrap();
 
-        let results = conn.search_fts(&SearchFtsParams {
-            actor_id: "a1",
-            fts_query: "\"Rust\"",
-            namespace: None,
-            namespace_prefix: None,
-            strategy: None,
-            limit: 10,
-        }).unwrap();
+        let results = conn
+            .search_fts(&SearchFtsParams {
+                actor_id: "a1",
+                fts_query: "\"Rust\"",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                limit: 10,
+            })
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].0.content.contains("Rust"));
         assert!(results[0].1 > 0.0);
@@ -2175,17 +2443,21 @@ mod tests {
     #[test]
     fn test_search_fts_actor_scoping() {
         let (_dir, conn) = open_temp();
-        conn.insert_memory(&mem_params("a1", "Rust programming", "semantic")).unwrap();
-        conn.insert_memory(&mem_params("a2", "Rust scripting", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "Rust programming", "semantic"))
+            .unwrap();
+        conn.insert_memory(&mem_params("a2", "Rust scripting", "semantic"))
+            .unwrap();
 
-        let results = conn.search_fts(&SearchFtsParams {
-            actor_id: "a1",
-            fts_query: "\"Rust\"",
-            namespace: None,
-            namespace_prefix: None,
-            strategy: None,
-            limit: 10,
-        }).unwrap();
+        let results = conn
+            .search_fts(&SearchFtsParams {
+                actor_id: "a1",
+                fts_query: "\"Rust\"",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                limit: 10,
+            })
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.actor_id, "a1");
     }
@@ -2193,17 +2465,22 @@ mod tests {
     #[test]
     fn test_search_fts_valid_only() {
         let (_dir, conn) = open_temp();
-        let m = conn.insert_memory(&mem_params("a1", "Rust programming", "semantic")).unwrap();
-        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate).unwrap();
+        let m = conn
+            .insert_memory(&mem_params("a1", "Rust programming", "semantic"))
+            .unwrap();
+        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate)
+            .unwrap();
 
-        let results = conn.search_fts(&SearchFtsParams {
-            actor_id: "a1",
-            fts_query: "\"Rust\"",
-            namespace: None,
-            namespace_prefix: None,
-            strategy: None,
-            limit: 10,
-        }).unwrap();
+        let results = conn
+            .search_fts(&SearchFtsParams {
+                actor_id: "a1",
+                fts_query: "\"Rust\"",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                limit: 10,
+            })
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -2213,20 +2490,24 @@ mod tests {
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/lang"),
             ..mem_params("a1", "Rust programming", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
         conn.insert_memory(&InsertMemoryParams {
             namespace: Some("/other"),
             ..mem_params("a1", "Rust scripting", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
 
-        let results = conn.search_fts(&SearchFtsParams {
-            actor_id: "a1",
-            fts_query: "\"Rust\"",
-            namespace: Some("/lang"),
-            namespace_prefix: None,
-            strategy: None,
-            limit: 10,
-        }).unwrap();
+        let results = conn
+            .search_fts(&SearchFtsParams {
+                actor_id: "a1",
+                fts_query: "\"Rust\"",
+                namespace: Some("/lang"),
+                namespace_prefix: None,
+                strategy: None,
+                limit: 10,
+            })
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.namespace, "/lang");
     }
@@ -2234,16 +2515,19 @@ mod tests {
     #[test]
     fn test_search_fts_no_match() {
         let (_dir, conn) = open_temp();
-        conn.insert_memory(&mem_params("a1", "Python scripting", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "Python scripting", "semantic"))
+            .unwrap();
 
-        let results = conn.search_fts(&SearchFtsParams {
-            actor_id: "a1",
-            fts_query: "\"Rust\"",
-            namespace: None,
-            namespace_prefix: None,
-            strategy: None,
-            limit: 10,
-        }).unwrap();
+        let results = conn
+            .search_fts(&SearchFtsParams {
+                actor_id: "a1",
+                fts_query: "\"Rust\"",
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                limit: 10,
+            })
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -2258,20 +2542,24 @@ mod tests {
         conn.insert_memory(&InsertMemoryParams {
             embedding: Some(&emb1),
             ..mem_params("a1", "memory one", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
         conn.insert_memory(&InsertMemoryParams {
             embedding: Some(&emb2),
             ..mem_params("a1", "memory two", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
 
-        let results = conn.search_vector(&SearchVectorParams {
-            actor_id: "a1",
-            embedding: &emb1,
-            namespace: None,
-            namespace_prefix: None,
-            strategy: None,
-            limit: 10,
-        }).unwrap();
+        let results = conn
+            .search_vector(&SearchVectorParams {
+                actor_id: "a1",
+                embedding: &emb1,
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                limit: 10,
+            })
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0.content, "memory one");
         assert!(results[0].1 < results[1].1);
@@ -2284,20 +2572,24 @@ mod tests {
         conn.insert_memory(&InsertMemoryParams {
             embedding: Some(&emb),
             ..mem_params("a1", "actor1 memory", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
         conn.insert_memory(&InsertMemoryParams {
             embedding: Some(&emb),
             ..mem_params("a2", "actor2 memory", "semantic")
-        }).unwrap();
+        })
+        .unwrap();
 
-        let results = conn.search_vector(&SearchVectorParams {
-            actor_id: "a1",
-            embedding: &emb,
-            namespace: None,
-            namespace_prefix: None,
-            strategy: None,
-            limit: 10,
-        }).unwrap();
+        let results = conn
+            .search_vector(&SearchVectorParams {
+                actor_id: "a1",
+                embedding: &emb,
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                limit: 10,
+            })
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.actor_id, "a1");
     }
@@ -2305,17 +2597,20 @@ mod tests {
     #[test]
     fn test_search_vector_no_embeddings() {
         let (_dir, conn) = open_temp();
-        conn.insert_memory(&mem_params("a1", "no embedding", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "no embedding", "semantic"))
+            .unwrap();
         let emb = vec![0.1f32; 384];
 
-        let results = conn.search_vector(&SearchVectorParams {
-            actor_id: "a1",
-            embedding: &emb,
-            namespace: None,
-            namespace_prefix: None,
-            strategy: None,
-            limit: 10,
-        }).unwrap();
+        let results = conn
+            .search_vector(&SearchVectorParams {
+                actor_id: "a1",
+                embedding: &emb,
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                limit: 10,
+            })
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -2325,19 +2620,23 @@ mod tests {
         let mut emb = vec![0.0f32; 384];
         emb[0] = 1.0;
 
-        let m = conn.insert_memory(&InsertMemoryParams {
-            embedding: Some(&emb),
-            ..mem_params("a1", "roundtrip memory", "semantic")
-        }).unwrap();
+        let m = conn
+            .insert_memory(&InsertMemoryParams {
+                embedding: Some(&emb),
+                ..mem_params("a1", "roundtrip memory", "semantic")
+            })
+            .unwrap();
 
-        let results = conn.search_vector(&SearchVectorParams {
-            actor_id: "a1",
-            embedding: &emb,
-            namespace: None,
-            namespace_prefix: None,
-            strategy: None,
-            limit: 1,
-        }).unwrap();
+        let results = conn
+            .search_vector(&SearchVectorParams {
+                actor_id: "a1",
+                embedding: &emb,
+                namespace: None,
+                namespace_prefix: None,
+                strategy: None,
+                limit: 1,
+            })
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, m.id);
         assert!(results[0].1 < 1e-5);
@@ -2356,7 +2655,8 @@ mod tests {
             metadata: None,
             source_session_id: None,
             embedding: None,
-        }).unwrap()
+        })
+        .unwrap()
     }
 
     #[test]
@@ -2364,13 +2664,15 @@ mod tests {
         let (_dir, conn) = open_temp();
         let m1 = make_memory(&conn, "a1", "from");
         let m2 = make_memory(&conn, "a1", "to");
-        let edge = conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1",
-            from_memory_id: &m1.id,
-            to_memory_id: &m2.id,
-            label: "depends_on",
-            properties: Some(r#"{"weight": 1}"#),
-        }).unwrap();
+        let edge = conn
+            .insert_edge(&InsertEdgeParams {
+                actor_id: "a1",
+                from_memory_id: &m1.id,
+                to_memory_id: &m2.id,
+                label: "depends_on",
+                properties: Some(r#"{"weight": 1}"#),
+            })
+            .unwrap();
         assert_eq!(edge.from_memory_id, m1.id);
         assert_eq!(edge.to_memory_id, m2.id);
         assert_eq!(edge.label, "depends_on");
@@ -2418,20 +2720,34 @@ mod tests {
         let m2 = make_memory(&conn, "a1", "out1");
         let m3 = make_memory(&conn, "a1", "out2");
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &m1.id,
+            to_memory_id: &m2.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m3.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &m1.id,
+            to_memory_id: &m3.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
         // Incoming edge should not appear in Out
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m2.id, to_memory_id: &m1.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &m2.id,
+            to_memory_id: &m1.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
 
-        let neighbors = conn.get_neighbors("a1", &m1.id, Direction::Out, None, 100).unwrap();
+        let neighbors = conn
+            .get_neighbors("a1", &m1.id, Direction::Out, None, 100)
+            .unwrap();
         assert_eq!(neighbors.len(), 2);
         let ids: Vec<&str> = neighbors.iter().map(|n| n.memory.id.as_str()).collect();
         assert!(ids.contains(&m2.id.as_str()));
@@ -2445,15 +2761,25 @@ mod tests {
         let m2 = make_memory(&conn, "a1", "out");
         let m3 = make_memory(&conn, "a1", "in");
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &m1.id,
+            to_memory_id: &m2.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m3.id, to_memory_id: &m1.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &m3.id,
+            to_memory_id: &m1.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
 
-        let neighbors = conn.get_neighbors("a1", &m1.id, Direction::Both, None, 100).unwrap();
+        let neighbors = conn
+            .get_neighbors("a1", &m1.id, Direction::Both, None, 100)
+            .unwrap();
         assert_eq!(neighbors.len(), 2);
         let ids: Vec<&str> = neighbors.iter().map(|n| n.memory.id.as_str()).collect();
         assert!(ids.contains(&m2.id.as_str()));
@@ -2467,13 +2793,21 @@ mod tests {
         let b = make_memory(&conn, "a1", "B");
         let c = make_memory(&conn, "a1", "C");
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &a.id,
+            to_memory_id: &b.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &b.id, to_memory_id: &c.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &b.id,
+            to_memory_id: &c.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
 
         let nodes = conn.traverse("a1", &a.id, 2, None, Direction::Out).unwrap();
         assert_eq!(nodes.len(), 2);
@@ -2490,13 +2824,21 @@ mod tests {
         let a = make_memory(&conn, "a1", "A");
         let b = make_memory(&conn, "a1", "B");
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &a.id,
+            to_memory_id: &b.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &b.id, to_memory_id: &a.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &b.id,
+            to_memory_id: &a.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
 
         let nodes = conn.traverse("a1", &a.id, 5, None, Direction::Out).unwrap();
         // Should visit B once, then stop (A already visited)
@@ -2511,13 +2853,21 @@ mod tests {
         let b = make_memory(&conn, "a1", "B");
         let c = make_memory(&conn, "a1", "C");
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &a.id, to_memory_id: &b.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &a.id,
+            to_memory_id: &b.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &b.id, to_memory_id: &c.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &b.id,
+            to_memory_id: &c.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
 
         let nodes = conn.traverse("a1", &a.id, 1, None, Direction::Out).unwrap();
         assert_eq!(nodes.len(), 1);
@@ -2536,15 +2886,24 @@ mod tests {
         let (_dir, conn) = open_temp();
         let m1 = make_memory(&conn, "a1", "from");
         let m2 = make_memory(&conn, "a1", "to");
-        let edge = conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "old", properties: None,
-        }).unwrap();
+        let edge = conn
+            .insert_edge(&InsertEdgeParams {
+                actor_id: "a1",
+                from_memory_id: &m1.id,
+                to_memory_id: &m2.id,
+                label: "old",
+                properties: None,
+            })
+            .unwrap();
 
-        let updated = conn.update_edge(&UpdateEdgeParams {
-            actor_id: "a1", edge_id: &edge.id,
-            label: Some("new"), properties: None,
-        }).unwrap();
+        let updated = conn
+            .update_edge(&UpdateEdgeParams {
+                actor_id: "a1",
+                edge_id: &edge.id,
+                label: Some("new"),
+                properties: None,
+            })
+            .unwrap();
         assert_eq!(updated.label, "new");
         assert_eq!(updated.properties, None);
     }
@@ -2554,13 +2913,21 @@ mod tests {
         let (_dir, conn) = open_temp();
         let m1 = make_memory(&conn, "a1", "from");
         let m2 = make_memory(&conn, "a1", "to");
-        let edge = conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
+        let edge = conn
+            .insert_edge(&InsertEdgeParams {
+                actor_id: "a1",
+                from_memory_id: &m1.id,
+                to_memory_id: &m2.id,
+                label: "uses",
+                properties: None,
+            })
+            .unwrap();
 
         conn.delete_edge("a1", &edge.id).unwrap();
-        assert!(matches!(conn.get_edge("a1", &edge.id), Err(MemoryError::NotFound(_))));
+        assert!(matches!(
+            conn.get_edge("a1", &edge.id),
+            Err(MemoryError::NotFound(_))
+        ));
     }
 
     #[test]
@@ -2576,17 +2943,20 @@ mod tests {
         let m1 = make_memory(&conn, "a1", "from");
         let m2 = make_memory(&conn, "a1", "to");
         conn.insert_edge(&InsertEdgeParams {
-            actor_id: "a1", from_memory_id: &m1.id, to_memory_id: &m2.id,
-            label: "uses", properties: None,
-        }).unwrap();
+            actor_id: "a1",
+            from_memory_id: &m1.id,
+            to_memory_id: &m2.id,
+            label: "uses",
+            properties: None,
+        })
+        .unwrap();
 
         conn.delete_memory("a1", &m1.id).unwrap();
 
         // Edge should be gone due to CASCADE
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM knowledge_edges", [], |r| r.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM knowledge_edges", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 0);
     }
-
 }

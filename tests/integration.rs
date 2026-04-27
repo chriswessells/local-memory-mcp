@@ -12,10 +12,13 @@ async fn test_event_lifecycle() {
     // add_event (conversation)
     let ev = parse_ok(
         server
-            .add_event(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
-                "role": "user", "content": "hello world"
-            })).unwrap()))
+            .add_event(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
+                    "role": "user", "content": "hello world"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert!(ev["id"].is_string());
@@ -26,9 +29,12 @@ async fn test_event_lifecycle() {
     // get_event
     let ev2 = parse_ok(
         server
-            .get_event(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "event_id": event_id
-            })).unwrap()))
+            .get_event(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "event_id": event_id
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(ev2["id"], event_id);
@@ -36,9 +42,12 @@ async fn test_event_lifecycle() {
     // get_events
     let evts = parse_ok(
         server
-            .get_events(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "session_id": "s1"
-            })).unwrap()))
+            .get_events(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "s1"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(evts.as_array().unwrap().len(), 1);
@@ -46,9 +55,12 @@ async fn test_event_lifecycle() {
     // list_sessions
     let sessions = parse_ok(
         server
-            .list_sessions(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1"
-            })).unwrap()))
+            .list_sessions(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(sessions[0]["event_count"], 1);
@@ -56,11 +68,14 @@ async fn test_event_lifecycle() {
     // add expired event + delete_expired
     parse_ok(
         server
-            .add_event(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
-                "role": "user", "content": "expired",
-                "expires_at": "2000-01-01T00:00:00Z"
-            })).unwrap()))
+            .add_event(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
+                    "role": "user", "content": "expired",
+                    "expires_at": "2000-01-01T00:00:00Z"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     let del = parse_ok(server.delete_expired().await);
@@ -74,9 +89,12 @@ async fn test_memory_lifecycle() {
     // store
     let mem = parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "content": "rust is great", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "content": "rust is great", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert!(mem["id"].is_string());
@@ -86,9 +104,12 @@ async fn test_memory_lifecycle() {
     // get
     let m2 = parse_ok(
         server
-            .get_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "memory_id": mem_id
-            })).unwrap()))
+            .get_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "memory_id": mem_id
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(m2["id"], mem_id);
@@ -96,9 +117,12 @@ async fn test_memory_lifecycle() {
     // list
     let list = parse_ok(
         server
-            .list_memories(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1"
-            })).unwrap()))
+            .list_memories(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(list.as_array().unwrap().len(), 1);
@@ -106,10 +130,13 @@ async fn test_memory_lifecycle() {
     // consolidate (update)
     let new_mem = parse_ok(
         server
-            .consolidate(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "memory_id": mem_id,
-                "action": "update", "new_content": "rust is amazing"
-            })).unwrap()))
+            .consolidate(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "memory_id": mem_id,
+                    "action": "update", "new_content": "rust is amazing"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     let new_id = new_mem["id"].as_str().unwrap();
@@ -118,9 +145,12 @@ async fn test_memory_lifecycle() {
     // list valid_only → only new memory
     let list = parse_ok(
         server
-            .list_memories(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "valid_only": true
-            })).unwrap()))
+            .list_memories(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "valid_only": true
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(list.as_array().unwrap().len(), 1);
@@ -129,9 +159,12 @@ async fn test_memory_lifecycle() {
     // delete
     let del = parse_ok(
         server
-            .delete_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "memory_id": new_id
-            })).unwrap()))
+            .delete_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "memory_id": new_id
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(del["deleted"], true);
@@ -139,9 +172,12 @@ async fn test_memory_lifecycle() {
     // get deleted → not_found
     parse_err(
         server
-            .get_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "memory_id": new_id
-            })).unwrap()))
+            .get_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "memory_id": new_id
+                }))
+                .unwrap(),
+            ))
             .await,
         "not_found",
     );
@@ -151,21 +187,31 @@ async fn test_memory_lifecycle() {
 async fn test_recall_fts() {
     let (_dir, server) = setup();
 
-    for content in ["the quick brown fox", "lazy dog sleeps", "rust programming language"] {
+    for content in [
+        "the quick brown fox",
+        "lazy dog sleeps",
+        "rust programming language",
+    ] {
         parse_ok(
             server
-                .store_memory(Parameters(serde_json::from_value(json!({
-                    "actor_id": "a1", "content": content, "strategy": "core"
-                })).unwrap()))
+                .store_memory(Parameters(
+                    serde_json::from_value(json!({
+                        "actor_id": "a1", "content": content, "strategy": "core"
+                    }))
+                    .unwrap(),
+                ))
                 .await,
         );
     }
 
     let results = parse_ok(
         server
-            .recall(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "query": "fox"
-            })).unwrap()))
+            .recall(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "query": "fox"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     let arr = results.as_array().unwrap();
@@ -180,19 +226,31 @@ async fn test_graph_lifecycle() {
 
     let m1 = parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "content": "memory one", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "content": "memory one", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
-    )["id"].as_str().unwrap().to_string();
+    )["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let m2 = parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "content": "memory two", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "content": "memory two", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
-    )["id"].as_str().unwrap().to_string();
+    )["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // add_edge
     let edge = parse_ok(
@@ -209,9 +267,12 @@ async fn test_graph_lifecycle() {
     // get_neighbors
     let neighbors = parse_ok(
         server
-            .get_neighbors(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "memory_id": m1
-            })).unwrap()))
+            .get_neighbors(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "memory_id": m1
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(neighbors.as_array().unwrap().len(), 1);
@@ -219,9 +280,12 @@ async fn test_graph_lifecycle() {
     // traverse
     let nodes = parse_ok(
         server
-            .traverse(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "start_memory_id": m1
-            })).unwrap()))
+            .traverse(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "start_memory_id": m1
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert!(!nodes.as_array().unwrap().is_empty());
@@ -229,9 +293,12 @@ async fn test_graph_lifecycle() {
     // update_edge
     let updated = parse_ok(
         server
-            .update_edge(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "edge_id": edge_id, "label": "depends_on"
-            })).unwrap()))
+            .update_edge(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "edge_id": edge_id, "label": "depends_on"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(updated["label"], "depends_on");
@@ -239,9 +306,12 @@ async fn test_graph_lifecycle() {
     // delete_edge
     let del = parse_ok(
         server
-            .delete_edge(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "edge_id": edge_id
-            })).unwrap()))
+            .delete_edge(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "edge_id": edge_id
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(del["deleted"], true);
@@ -249,9 +319,12 @@ async fn test_graph_lifecycle() {
     // list_labels
     let labels = parse_ok(
         server
-            .list_labels(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1"
-            })).unwrap()))
+            .list_labels(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert!(labels.is_array());
@@ -259,9 +332,12 @@ async fn test_graph_lifecycle() {
     // graph_stats
     let stats = parse_ok(
         server
-            .graph_stats(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1"
-            })).unwrap()))
+            .graph_stats(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(stats["total_edges"], 0);
@@ -274,9 +350,12 @@ async fn test_store_isolation() {
     // Store memory in default
     parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "content": "default mem", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "content": "default mem", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
 
@@ -287,18 +366,24 @@ async fn test_store_isolation() {
     // switch to "other"
     parse_ok(
         server
-            .switch_store(Parameters(serde_json::from_value(json!({
-                "name": "other"
-            })).unwrap()))
+            .switch_store(Parameters(
+                serde_json::from_value(json!({
+                    "name": "other"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
 
     // list in other → empty
     let list = parse_ok(
         server
-            .list_memories(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1"
-            })).unwrap()))
+            .list_memories(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(list.as_array().unwrap().len(), 0);
@@ -306,27 +391,36 @@ async fn test_store_isolation() {
     // store in other
     parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "content": "other mem", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "content": "other mem", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
 
     // switch back to default
     parse_ok(
         server
-            .switch_store(Parameters(serde_json::from_value(json!({
-                "name": "default"
-            })).unwrap()))
+            .switch_store(Parameters(
+                serde_json::from_value(json!({
+                    "name": "default"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
 
     // list → only original
     let list = parse_ok(
         server
-            .list_memories(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1"
-            })).unwrap()))
+            .list_memories(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(list.as_array().unwrap().len(), 1);
@@ -339,9 +433,12 @@ async fn test_store_isolation() {
     // delete "other"
     let del = parse_ok(
         server
-            .delete_store(Parameters(serde_json::from_value(json!({
-                "name": "other"
-            })).unwrap()))
+            .delete_store(Parameters(
+                serde_json::from_value(json!({
+                    "name": "other"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(del["deleted"], true);
@@ -354,26 +451,41 @@ async fn test_actor_isolation() {
     // Store 2 memories as alice
     let alice_m1 = parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "alice", "content": "alice mem 1", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "alice", "content": "alice mem 1", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
-    )["id"].as_str().unwrap().to_string();
+    )["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let alice_m2 = parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "alice", "content": "alice mem 2", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "alice", "content": "alice mem 2", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
-    )["id"].as_str().unwrap().to_string();
+    )["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // bob can't see alice's memory
     parse_err(
         server
-            .get_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "bob", "memory_id": alice_m1
-            })).unwrap()))
+            .get_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "bob", "memory_id": alice_m1
+                }))
+                .unwrap(),
+            ))
             .await,
         "not_found",
     );
@@ -381,18 +493,24 @@ async fn test_actor_isolation() {
     // bob stores his own
     parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "bob", "content": "bob mem", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "bob", "content": "bob mem", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
 
     // alice list → only her 2
     let list = parse_ok(
         server
-            .list_memories(Parameters(serde_json::from_value(json!({
-                "actor_id": "alice"
-            })).unwrap()))
+            .list_memories(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "alice"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(list.as_array().unwrap().len(), 2);
@@ -400,19 +518,25 @@ async fn test_actor_isolation() {
     // add edge between alice's memories
     parse_ok(
         server
-            .add_edge(Parameters(serde_json::from_value(json!({
-                "actor_id": "alice", "from_memory_id": alice_m1,
-                "to_memory_id": alice_m2, "label": "link"
-            })).unwrap()))
+            .add_edge(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "alice", "from_memory_id": alice_m1,
+                    "to_memory_id": alice_m2, "label": "link"
+                }))
+                .unwrap(),
+            ))
             .await,
     );
 
     // bob can't see alice's neighbors
     let neighbors = parse_ok(
         server
-            .get_neighbors(Parameters(serde_json::from_value(json!({
-                "actor_id": "bob", "memory_id": alice_m1
-            })).unwrap()))
+            .get_neighbors(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "bob", "memory_id": alice_m1
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(neighbors.as_array().unwrap().len(), 0);
@@ -426,19 +550,25 @@ async fn test_blob_event_roundtrip() {
 
     let ev = parse_ok(
         server
-            .add_event(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "session_id": "s1", "event_type": "blob",
-                "blob_data": original
-            })).unwrap()))
+            .add_event(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "s1", "event_type": "blob",
+                    "blob_data": original
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     let event_id = ev["id"].as_str().unwrap();
 
     let ev2 = parse_ok(
         server
-            .get_event(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "event_id": event_id
-            })).unwrap()))
+            .get_event(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "event_id": event_id
+                }))
+                .unwrap(),
+            ))
             .await,
     );
     assert_eq!(ev2["blob_data"].as_str().unwrap(), original);
@@ -451,9 +581,12 @@ async fn test_error_responses() {
     // get nonexistent event → not_found
     let e = parse_err(
         server
-            .get_event(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "event_id": "nonexistent"
-            })).unwrap()))
+            .get_event(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "event_id": "nonexistent"
+                }))
+                .unwrap(),
+            ))
             .await,
         "not_found",
     );
@@ -462,9 +595,12 @@ async fn test_error_responses() {
     // store empty content → invalid_input
     parse_err(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "content": "", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "content": "", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
         "invalid_input",
     );
@@ -472,18 +608,27 @@ async fn test_error_responses() {
     // self-edge → invalid_input
     let mid = parse_ok(
         server
-            .store_memory(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "content": "for edge test", "strategy": "core"
-            })).unwrap()))
+            .store_memory(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "content": "for edge test", "strategy": "core"
+                }))
+                .unwrap(),
+            ))
             .await,
-    )["id"].as_str().unwrap().to_string();
+    )["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     parse_err(
         server
-            .add_edge(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "from_memory_id": mid,
-                "to_memory_id": mid, "label": "self"
-            })).unwrap()))
+            .add_edge(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "from_memory_id": mid,
+                    "to_memory_id": mid, "label": "self"
+                }))
+                .unwrap(),
+            ))
             .await,
         "invalid_input",
     );

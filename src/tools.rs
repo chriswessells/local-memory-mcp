@@ -1,13 +1,16 @@
 use std::sync::{Arc, Mutex};
 
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{schemars, tool, tool_router};
 use serde::Deserialize;
 
 use crate::error::MemoryError;
 use crate::events::{self, BranchFilter, Event, InsertEventParams};
-use crate::graph::{self, Direction, InsertEdgeParams as GraphInsertEdgeParams, UpdateEdgeParams as GraphUpdateEdgeParams};
+use crate::graph::{
+    self, Direction, InsertEdgeParams as GraphInsertEdgeParams,
+    UpdateEdgeParams as GraphUpdateEdgeParams,
+};
 use crate::memories::{self, ConsolidateAction, InsertMemoryParams, ListMemoriesParams};
 use crate::search::{self, RecallParams};
 use crate::store::StoreManager;

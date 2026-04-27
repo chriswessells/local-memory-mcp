@@ -87,7 +87,9 @@ pub struct SearchVectorParams<'a> {
 
 fn validate_non_empty(value: &str, field: &str) -> Result<(), MemoryError> {
     if value.is_empty() {
-        return Err(MemoryError::InvalidInput(format!("{field} must not be empty")));
+        return Err(MemoryError::InvalidInput(format!(
+            "{field} must not be empty"
+        )));
     }
     Ok(())
 }
@@ -236,7 +238,10 @@ pub fn recall(db: &dyn Db, params: &RecallParams<'_>) -> Result<Vec<SearchResult
             })?;
             Ok(results
                 .into_iter()
-                .map(|(m, s)| SearchResult { memory: m, score: s })
+                .map(|(m, s)| SearchResult {
+                    memory: m,
+                    score: s,
+                })
                 .collect())
         }
         (None, Some(embedding)) => {
@@ -286,7 +291,9 @@ pub fn recall(db: &dyn Db, params: &RecallParams<'_>) -> Result<Vec<SearchResult
             })?;
 
             if fts_results.is_empty() {
-                tracing::warn!("hybrid search: FTS query sanitized to empty, falling back to vector-only");
+                tracing::warn!(
+                    "hybrid search: FTS query sanitized to empty, falling back to vector-only"
+                );
                 return Ok(vec_results
                     .into_iter()
                     .take(limit as usize)
@@ -297,7 +304,11 @@ pub fn recall(db: &dyn Db, params: &RecallParams<'_>) -> Result<Vec<SearchResult
                     .collect());
             }
 
-            Ok(reciprocal_rank_fusion(&fts_results, &vec_results, limit as usize))
+            Ok(reciprocal_rank_fusion(
+                &fts_results,
+                &vec_results,
+                limit as usize,
+            ))
         }
     }
 }
@@ -353,7 +364,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_caps_token_count() {
-        let input = (0..100).map(|i| format!("word{i}")).collect::<Vec<_>>().join(" ");
+        let input = (0..100)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let result = sanitize_fts_query(&input).unwrap();
         let count = result.split_whitespace().count();
         assert_eq!(count, MAX_FTS_TOKENS);
@@ -422,9 +436,7 @@ mod tests {
         let score_rank1 = 1.0 / (RRF_K + 1.0);
         let score_rank2 = 1.0 / (RRF_K + 2.0);
         for r in &results {
-            assert!(
-                (r.score - score_rank1).abs() < 1e-10 || (r.score - score_rank2).abs() < 1e-10
-            );
+            assert!((r.score - score_rank1).abs() < 1e-10 || (r.score - score_rank2).abs() < 1e-10);
         }
     }
 
@@ -519,8 +531,10 @@ mod tests {
     #[test]
     fn test_recall_fts_only() {
         let (_dir, conn) = open_db();
-        conn.insert_memory(&mem_params("a1", "Rust programming language")).unwrap();
-        conn.insert_memory(&mem_params("a1", "Python scripting")).unwrap();
+        conn.insert_memory(&mem_params("a1", "Rust programming language"))
+            .unwrap();
+        conn.insert_memory(&mem_params("a1", "Python scripting"))
+            .unwrap();
 
         let params = RecallParams {
             actor_id: "a1",
@@ -584,7 +598,8 @@ mod tests {
         })
         .unwrap();
         // This memory matches only FTS
-        conn.insert_memory(&mem_params("a1", "unique term only text")).unwrap();
+        conn.insert_memory(&mem_params("a1", "unique term only text"))
+            .unwrap();
         // This memory matches only vector
         let mut emb2 = vec![0.0f32; 384];
         emb2[0] = 0.99;

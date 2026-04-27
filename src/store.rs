@@ -32,11 +32,28 @@ fn validate_name(name: &str) -> Result<(), MemoryError> {
     let base = upper.split('.').next().unwrap();
     if matches!(
         base,
-        "CON" | "PRN" | "AUX" | "NUL"
-            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
-            | "COM6" | "COM7" | "COM8" | "COM9"
-            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
-            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
     ) {
         return Err(MemoryError::InvalidName(name.into()));
     }
@@ -49,9 +66,7 @@ fn check_not_symlink(path: &Path) -> Result<(), MemoryError> {
             MemoryError::InvalidPath(format!("cannot read metadata for {}: {e}", path.display()))
         })?;
         if meta.file_type().is_symlink() {
-            return Err(MemoryError::InvalidPath(
-                "store path is a symlink".into(),
-            ));
+            return Err(MemoryError::InvalidPath("store path is a symlink".into()));
         }
     }
     Ok(())
@@ -61,7 +76,10 @@ fn resolve_and_verify(base_dir: &Path, name: &str) -> Result<PathBuf, MemoryErro
     let path = base_dir.join(format!("{name}.db"));
     check_not_symlink(&path)?;
     let canonical_base = std::fs::canonicalize(base_dir).map_err(|e| {
-        tracing::error!("Cannot canonicalize base directory {}: {e}", base_dir.display());
+        tracing::error!(
+            "Cannot canonicalize base directory {}: {e}",
+            base_dir.display()
+        );
         MemoryError::InvalidPath("cannot canonicalize base directory".into())
     })?;
     let resolved = canonical_base.join(format!("{name}.db"));
@@ -100,7 +118,9 @@ impl StoreManager {
                         "LOCAL_MEMORY_HOME must be absolute: {val}"
                     )));
                 }
-                if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                if p.components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+                {
                     return Err(MemoryError::InvalidPath(format!(
                         "LOCAL_MEMORY_HOME must not contain '..': {val}"
                     )));
@@ -267,12 +287,24 @@ impl StoreManager {
         })?;
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(meta) = std::fs::symlink_metadata(&path) else { continue; };
-            if meta.file_type().is_symlink() { continue; }
-            if !meta.is_file() { continue; }
-            let Some(ext) = path.extension() else { continue; };
-            if ext != "db" { continue; };
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue; };
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if !meta.is_file() {
+                continue;
+            }
+            let Some(ext) = path.extension() else {
+                continue;
+            };
+            if ext != "db" {
+                continue;
+            };
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
             let name = stem.to_string();
             let mut size = meta.len();
             for suffix in &["-wal", "-shm"] {
@@ -281,7 +313,10 @@ impl StoreManager {
                     size += m.len();
                 }
             }
-            stores.push(StoreInfo { name, size_bytes: size });
+            stores.push(StoreInfo {
+                name,
+                size_bytes: size,
+            });
         }
         stores.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(stores)
@@ -391,9 +426,15 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut mgr = StoreManager::with_base_dir(dir.path().to_path_buf()).unwrap();
         mgr.open_default().unwrap();
-        assert!(matches!(mgr.switch("../evil"), Err(MemoryError::InvalidName(_))));
+        assert!(matches!(
+            mgr.switch("../evil"),
+            Err(MemoryError::InvalidName(_))
+        ));
         assert!(matches!(mgr.switch(""), Err(MemoryError::InvalidName(_))));
-        assert!(matches!(mgr.switch(&"a".repeat(65)), Err(MemoryError::InvalidName(_))));
+        assert!(matches!(
+            mgr.switch(&"a".repeat(65)),
+            Err(MemoryError::InvalidName(_))
+        ));
     }
 
     #[test]
@@ -412,7 +453,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut mgr = StoreManager::with_base_dir(dir.path().to_path_buf()).unwrap();
         mgr.open_default().unwrap();
-        assert!(matches!(mgr.delete("default"), Err(MemoryError::ActiveStoreDeletion(_))));
+        assert!(matches!(
+            mgr.delete("default"),
+            Err(MemoryError::ActiveStoreDeletion(_))
+        ));
     }
 
     #[test]

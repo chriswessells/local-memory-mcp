@@ -23,11 +23,7 @@ pub struct Event {
     pub event_type: String,
     pub role: Option<String>,
     pub content: Option<String>,
-    #[serde(
-        with = "serde_bytes",
-        skip_serializing_if = "Option::is_none",
-        default
-    )]
+    #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none", default)]
     pub blob_data: Option<Vec<u8>>,
     pub metadata: Option<String>,
     pub branch_id: Option<String>,
@@ -84,7 +80,9 @@ pub struct GetEventsParams<'a> {
 
 fn validate_non_empty(value: &str, field: &str) -> Result<(), MemoryError> {
     if value.is_empty() {
-        return Err(MemoryError::InvalidInput(format!("{field} must not be empty")));
+        return Err(MemoryError::InvalidInput(format!(
+            "{field} must not be empty"
+        )));
     }
     Ok(())
 }
@@ -266,7 +264,11 @@ mod tests {
         (dir, conn)
     }
 
-    fn conversation_params<'a>(actor: &'a str, session: &'a str, content: &'a str) -> InsertEventParams<'a> {
+    fn conversation_params<'a>(
+        actor: &'a str,
+        session: &'a str,
+        content: &'a str,
+    ) -> InsertEventParams<'a> {
         InsertEventParams {
             actor_id: actor,
             session_id: session,
