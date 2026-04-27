@@ -4,7 +4,7 @@
 
 AI agents are stateless. Each conversation starts fresh with no knowledge of prior interactions. You need Kiro to remember facts, preferences, context, and relationships across sessions — locally, with no cloud dependencies, no Docker, no runtime dependencies.
 
-Amazon Bedrock AgentCore Memory solves this in the cloud. This project brings the same capabilities locally: short-term session memory, long-term extracted insights, semantic recall, and namespace isolation — all in a single compiled binary backed by SQLite.
+Amazon Bedrock AgentCore Memory solves this in the cloud. This project brings the same capabilities locally: short-term session memory, long-term extracted insights, semantic recall, and namespace isolation — all in a single compiled binary backed by SQLite. It goes further by adding a knowledge graph layer that connects memories with typed, traversable relationships.
 
 ## Solution
 
@@ -28,6 +28,7 @@ This is the north-star design constraint. It means:
    - **Extraction is explicit**: The agent calls `memory.store` instead of extraction happening automatically in the background. A prompt can handle this with: "After each conversation, extract key insights and store them as memories."
    - **Embeddings are caller-provided**: The agent provides vectors instead of the server generating them. A prompt can handle this with: "When storing or recalling memories, generate an embedding for the content."
    - **Store management is local-only**: `memory.switch_store`, `memory.list_stores`, etc. are additional tools that don't exist in AgentCore. An agent prompt can simply ignore them if targeting both backends.
+   - **Knowledge graph is additive**: `graph.*` tools provide relationship traversal between memories. AgentCore Memory doesn't have this natively. An agent prompt can use graph tools when available and fall back to namespace-based organization when not.
 
 5. **Prompt portability**: A single system prompt like the following should work against either backend:
 
@@ -41,6 +42,15 @@ This is the north-star design constraint. It means:
 
    Strategies: 'semantic' for facts, 'summary' for session summaries, 'user_preference' for preferences.
    Organize memories in namespaces like /user/{actorId}/preferences, /user/{actorId}/facts.
+   ```
+
+   And optionally extended with graph capabilities:
+
+   ```
+   When you identify relationships between memories, link them:
+   - graph.add_edge (from_memory_id, to_memory_id, label, properties?)
+   - graph.get_neighbors (memory_id, direction?, label?)
+   - graph.traverse (start_memory_id, max_depth?, label?, direction?)
    ```
 
 This principle guides every tool name, parameter name, return format, and behavioral decision in the design. When in doubt, match AgentCore Memory's behavior.
@@ -61,7 +71,7 @@ This principle guides every tool name, parameter name, return format, and behavi
                                           │  ┌────────▼───────────┐  │
                                           │  │  Memory Engine     │  │
                                           │  │  (short + long     │  │
-                                          │  │   term memory)     │  │
+                                          │  │   term + graph)    │  │
                                           │  └────────┬───────────┘  │
                                           │           │              │
                                           │  ┌────────▼───────────┐  │
@@ -83,6 +93,7 @@ This principle guides every tool name, parameter name, return format, and behavi
 | Database | SQLite (rusqlite + bundled) | Embedded, single-file, battle-tested, public domain |
 | Full-text search | FTS5 (built into SQLite) | BM25 ranking, prefix queries, no extra deps |
 | Vector search | sqlite-vec | Embeddable vector similarity for semantic recall |
+| Graph | SQLite edges table + recursive CTEs | Typed relationships between memories, multi-hop traversal without external deps |
 | MCP SDK | `rmcp` crate | Official Rust MCP SDK, macro-driven tool definitions |
 | Transport | stdio | Kiro's native MCP transport. Binary launched on demand. |
 | Storage | Single SQLite file per memory store | Simple backup (copy file), ACID transactions across all data |
@@ -96,13 +107,13 @@ The original kiro-graph project used SurrealDB embedded with RocksDB. We pivoted
 - **Build time**: SQLite compiles in seconds. SurrealDB + RocksDB takes minutes.
 - **Simplicity**: One file per database. No directory of RocksDB SST files.
 - **Maturity**: SQLite is the most deployed database in the world.
-- **Sufficient for agent memory**: Agent memory doesn't need native graph traversal. Relationships between memories are simple enough for an edges table + recursive CTEs. The primary access patterns are: store events, search by text, search by vector similarity, retrieve by session/actor.
+- **Sufficient for agent memory**: Graph traversal via recursive CTEs handles the relationship patterns needed for a knowledge graph (multi-hop neighbor discovery, path finding). The primary access patterns are: store events, search by text, search by vector similarity, retrieve by session/actor, traverse relationships.
 
 ---
 
 ## AgentCore Memory Feature Mapping
 
-This project implements a local equivalent of each AgentCore Memory capability:
+This project implements a local equivalent of each AgentCore Memory capability, plus a knowledge graph layer:
 
 | AgentCore Memory Feature | Local Implementation |
 |--------------------------|---------------------|
@@ -127,11 +138,26 @@ This project implements a local equivalent of each AgentCore Memory capability:
 | **PII awareness** | Documented as agent responsibility. The server stores what the agent sends. The agent should filter PII before calling `memory.store`. Noted in best practices. |
 | **Observability** | Tracing spans on all operations. Logged to stderr. `memory.stats` tool for counts and sizes. |
 
+### Beyond AgentCore Memory: Knowledge Graph
+
+AgentCore Memory does not include a graph database. This project adds one as a first-class feature:
+
+| Feature | Implementation |
+|---------|---------------|
+| **Typed edges between memories** | `knowledge_edges` table — labeled, directed relationships with properties |
+| **Neighbor discovery** | `graph.get_neighbors` — find directly connected memories by direction and label |
+| **Multi-hop traversal** | `graph.traverse` — BFS traversal via recursive CTEs, configurable depth and label filters |
+| **Edge management** | `graph.add_edge`, `graph.update_edge`, `graph.delete_edge` |
+| **Graph statistics** | `graph.stats` — edge count, label distribution |
+
+This enables the agent to build a knowledge graph on top of its memories — linking concepts, tracking dependencies, mapping relationships between projects, people, tools, and ideas. The graph and memory systems share the same SQLite file and ACID transactions.
+
 ### What's different from AgentCore Memory
 
 - **No managed LLM for extraction**: AgentCore Memory uses Bedrock models to automatically extract insights from events asynchronously. Locally, the agent (Kiro) performs extraction and provides the insight text via MCP tools. This keeps the server dependency-free.
 - **Embeddings provided by caller**: The server doesn't generate embeddings. The agent provides embedding vectors when storing memories and query vectors when searching. This avoids bundling a model.
 - **No automatic async extraction pipeline**: In AgentCore, long-term memory extraction happens automatically in the background after events are created. Here, the agent explicitly calls `memory.store` when it has an insight to persist. The server is a storage layer, not an intelligence layer.
+- **Knowledge graph is additive**: `graph.*` tools are a local-only extension. AgentCore Memory doesn't have native graph traversal. The graph tools are optional — an agent can use the memory system without them.
 - **Single-user**: No IAM, no encryption at rest (relies on OS file permissions), no multi-tenant access control.
 - **Local-first**: All data stays on disk. No network calls. No cloud dependency.
 - **Store management is additive**: `memory.switch_store`, `memory.list_stores`, etc. are local-only tools that don't exist in AgentCore. They extend the API without breaking compatibility — an agent prompt targeting both backends simply doesn't use them.
@@ -179,6 +205,22 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_memories_actor ON memories(actor_id, namespace, is_valid);
 CREATE INDEX IF NOT EXISTS idx_memories_strategy ON memories(strategy, is_valid);
+```
+
+### Knowledge edges (graph)
+
+```sql
+CREATE TABLE IF NOT EXISTS knowledge_edges (
+    id TEXT PRIMARY KEY,           -- UUID
+    from_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    to_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,           -- 'uses', 'depends_on', 'related_to', 'authored_by', etc.
+    properties TEXT,               -- JSON object for edge metadata
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_edges_from ON knowledge_edges(from_memory_id, label);
+CREATE INDEX IF NOT EXISTS idx_edges_to ON knowledge_edges(to_memory_id, label);
+CREATE INDEX IF NOT EXISTS idx_edges_label ON knowledge_edges(label);
 ```
 
 ### Memory embeddings (vector search)
@@ -272,7 +314,19 @@ CREATE TABLE IF NOT EXISTS _meta (
 | `memory.recall` | `actor_id`, `query?`, `embedding?`, `namespace?`, `namespace_prefix?`, `strategy?`, `limit?` | Search memories by text (FTS5) and/or vector similarity. Supports namespace prefix matching. |
 | `memory.consolidate` | `memory_id`, `new_content?`, `new_embedding?`, `action` (update/invalidate) | Update or invalidate a memory. On update, the old memory is marked invalid with `superseded_by` pointing to the new one. |
 | `memory.list` | `actor_id`, `namespace?`, `namespace_prefix?`, `strategy?`, `valid_only?`, `limit?`, `offset?` | List memories with filters. Supports namespace prefix matching. |
-| `memory.delete` | `memory_id` | Hard-delete a memory |
+| `memory.delete` | `memory_id` | Hard-delete a memory and its edges |
+
+### Knowledge graph (local-only, not in AgentCore)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `graph.add_edge` | `from_memory_id`, `to_memory_id`, `label`, `properties?` | Create a directed, labeled relationship between two memories |
+| `graph.get_neighbors` | `memory_id`, `direction?` (out/in/both), `label?`, `limit?` | Get directly connected memories |
+| `graph.traverse` | `start_memory_id`, `max_depth?` (default 2, max 5), `label?`, `direction?` | Multi-hop BFS traversal via recursive CTEs |
+| `graph.update_edge` | `edge_id`, `label?`, `properties?` | Update an edge's label or properties |
+| `graph.delete_edge` | `edge_id` | Delete a relationship |
+| `graph.list_labels` | — | List all distinct edge labels with counts |
+| `graph.stats` | — | Edge count, label distribution, most-connected memories |
 
 ### Namespaces
 
@@ -304,9 +358,9 @@ CREATE TABLE IF NOT EXISTS _meta (
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `memory.stats` | `actor_id?` | Event count, memory count, session count, namespace count, DB size |
-| `memory.export` | `actor_id?`, `format?` | Export memories as JSON |
-| `memory.import` | `data`, `format?` | Import memories from JSON |
+| `memory.stats` | `actor_id?` | Event count, memory count, edge count, session count, namespace count, DB size |
+| `memory.export` | `actor_id?`, `format?` | Export memories and edges as JSON |
+| `memory.import` | `data`, `format?` | Import memories and edges from JSON |
 
 ---
 
@@ -323,6 +377,8 @@ These mirror AgentCore Memory best practices, adapted for local use:
 4. **PII awareness**: The server stores what the agent sends. Filter PII before calling `memory.store` if the memory shouldn't contain personal information. Blob events are not processed for long-term memory — use them for transient agent state.
 
 5. **Consolidation rhythm**: Periodically consolidate related memories to avoid duplication. Use `memory.consolidate` with `action: 'update'` to merge insights, or `action: 'invalidate'` to mark outdated memories. The audit trail preserves history via `superseded_by`.
+
+6. **Knowledge graph**: When you identify relationships between memories, link them with `graph.add_edge`. Use descriptive labels like `uses`, `depends_on`, `related_to`, `authored_by`, `part_of`. Use `graph.traverse` to discover connected knowledge — e.g., "what does this project depend on, and what do those dependencies depend on?"
 
 ---
 
@@ -375,6 +431,7 @@ local-memory-mcp/
 │   ├── error.rs               # Typed error enum
 │   ├── events.rs              # Short-term memory operations
 │   ├── memories.rs            # Long-term memory operations
+│   ├── graph.rs               # Knowledge graph operations
 │   ├── search.rs              # FTS5 + vector search
 │   └── tools.rs               # MCP tool definitions
 └── tests/
@@ -431,6 +488,7 @@ Override with `LOCAL_MEMORY_HOME` env var.
 - **Event writes**: In-process, no network hop. ~1μs per insert.
 - **FTS5 search**: Sub-millisecond at typical scale (thousands of memories)
 - **Vector search**: sqlite-vec HNSW, sub-millisecond for <100K vectors
+- **Graph traversal**: Recursive CTEs, sub-millisecond for typical depths (2-3 hops, thousands of edges)
 - **Memory**: Single SQLite connection. Minimal footprint.
 - **Binary size**: ~5-10MB (SQLite + sqlite-vec compiled in)
 
@@ -444,12 +502,13 @@ Override with `LOCAL_MEMORY_HOME` env var.
 | 2 | Event tools | `events.rs`, `tools.rs` — add, get, list sessions, expire events |
 | 3 | Memory tools | `memories.rs`, `tools.rs` — store, get, recall, consolidate, list, delete |
 | 4 | Search | `search.rs` — FTS5 + vector search integration |
-| 5 | Session tools | `tools.rs` — checkpoints, branches |
-| 6 | Store management tools | `tools.rs` — switch, list, delete stores |
-| 7 | Namespace tools | `tools.rs` — create, list, delete namespaces |
-| 8 | MCP server | `main.rs` — server init, stdio transport, shutdown |
-| 9 | CI/CD | `.github/workflows/` — ci.yml, release.yml |
-| 10 | Installers | `install.sh`, `install.ps1` |
+| 5 | Knowledge graph | `graph.rs`, `tools.rs` — add/update/delete edges, neighbors, traverse, stats |
+| 6 | Session tools | `tools.rs` — checkpoints, branches |
+| 7 | Store management tools | `tools.rs` — switch, list, delete stores |
+| 8 | Namespace tools | `tools.rs` — create, list, delete namespaces |
+| 9 | MCP server | `main.rs` — server init, stdio transport, shutdown |
+| 10 | CI/CD | `.github/workflows/` — ci.yml, release.yml |
+| 11 | Installers | `install.sh`, `install.ps1` |
 
 ---
 
@@ -457,9 +516,9 @@ Override with `LOCAL_MEMORY_HOME` env var.
 
 - **Local embedding model**: Bundle a small ONNX model (all-MiniLM-L6-v2) via `ort` crate so the server can generate embeddings without the agent providing vectors
 - **Automatic extraction**: On-device LLM to automatically extract insights from events (like AgentCore's managed async extraction pipeline)
-- **Graph relationships**: Add an edges table linking memories to each other for relationship traversal
 - **Import from AgentCore**: Import/export format compatible with AgentCore Memory API
 - **Encryption at rest**: SQLite Encryption Extension or sqlcipher
-- **Web UI**: Local web interface for browsing and visualizing memories
+- **Web UI**: Local web interface for browsing and visualizing memories and the knowledge graph
 - **Multi-agent**: Actor-based isolation for multi-agent systems sharing a memory store
 - **Custom strategy prompts**: Store extraction/consolidation prompt templates per strategy, for use when local LLM extraction is available
+- **Graph algorithms**: PageRank, shortest path, community detection on the knowledge graph
