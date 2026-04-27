@@ -75,3 +75,17 @@ Capture what went wrong, what surprised us, and what we'd do differently.
 - **Hybrid search score semantics are inherently inconsistent.** FTS returns negated BM25 (unbounded), vector returns `1/(1+distance)` (0–1), and RRF returns rank-based scores (~0–0.033). There's no way to normalize these without losing information. Document the incomparability explicitly in the API and consider adding a `search_mode` field so callers know which scale they're looking at.
 
 - **Wire new modules in `lib.rs` and `main.rs` immediately.** The binary crate (`main.rs`) has its own `mod` declarations separate from `lib.rs`. Forgetting to add `mod search;` to `main.rs` caused a compile error that wasn't caught by `cargo check` on the library crate alone. Always add to both files in the same step.
+
+## From Component 9 (MCP Server)
+
+- **JSON has no binary type — design blob encoding before implementation.** The design initially used `Vec<u8>` for `blob_data`, which schemars generates as an array of integers. Five reviewers flagged this as Critical/High. Base64-encoded strings are the standard for binary data over JSON-RPC. Define the encoding convention during design, not during code review.
+
+- **Use typed enums for fixed-value string fields in MCP param structs.** String-typed fields like `event_type`, `role`, and `action` produce `{"type": "string"}` in JSON Schema with no enum constraint. LLM clients have no way to discover valid values. Rust enums with `#[derive(Deserialize, JsonSchema)]` and `#[serde(rename_all = "snake_case")]` produce proper `{"type": "string", "enum": [...]}` schemas. This eliminates runtime parsing helpers and moves validation left.
+
+- **Never use `unwrap()` on serialization in production code.** `serde_json::to_string(&value).unwrap()` is a latent panic. Use `.map_err()` to flow serialization failures through the normal error path. Similarly, `unwrap_or_default()` silently swallows errors — propagate them instead.
+
+- **`process::exit()` bypasses Drop.** Using `std::process::exit(1)` on startup errors skips `StoreManager::drop`, which means WAL checkpoint doesn't run. Return `Result` from `main` instead — normal Rust drop semantics handle cleanup.
+
+- **Expand MCP tool descriptions for LLM consumption.** One-line descriptions are insufficient. LLMs need 2-4 sentences explaining: purpose, required vs optional parameters, valid enum values, and return shape. The tool description is the primary signal an LLM uses to decide when and how to call a tool.
+
+- **Hand-formatted JSON strings are fragile.** Using `format!()` to construct JSON error responses risks malformed output if the interpolated values contain quotes or backslashes. Use `serde_json::json!()` or a typed struct with `Serialize` for all JSON construction.

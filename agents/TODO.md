@@ -19,6 +19,8 @@
 
 - [x] Component 4: Search (FTS5 + vector) — design (2 review rounds, 6 High resolved), code (22 tests), code review (1 High fixed + 1 Medium NaN validation), merged
 
+- [x] Component 9: MCP server — design (1 Critical + 11 High resolved), code (15 tools, 4 tests), code review (2 fixes: error propagation, JSON escaping), merged
+
 ## In Progress
 
 _(none)_
@@ -29,7 +31,7 @@ _(none)_
 - [ ] Component 6: Session tools (checkpoints, branches) — design, review, code, review
 - [ ] Component 7: Store management tools — design, review, code, review
 - [ ] Component 8: Namespace tools — design, review, code, review
-- [ ] Component 9: MCP server — design, review, code, review
+- [ ] Component 9: MCP server — ✅ done (moved to Completed)
 - [ ] Component 10: CI/CD — design, review, code, review
 - [ ] Component 11: Installers — design, review, code, review
 
@@ -155,6 +157,31 @@ _(none)_
 - [ ] Add adversarial FTS injection tests (content:secret, hello*, NEAR(a b), a AND b)
 - [ ] Add search_mode field to SearchResult so callers can detect hybrid→vector-only fallback
 - [ ] Add validate_max_len for actor_id in memories.rs get/consolidate/delete for consistency
+
+### From Component 9 design review (Medium/Low)
+- [ ] Error messages echo user-supplied IDs in NotFound — use generic messages
+- [ ] ConnectionFailed/InvalidPath errors may leak filesystem paths — sanitize at MCP boundary
+- [ ] Duplicated validation helpers across modules — extract to shared module
+- [ ] schemars version coupling with rmcp — consider pinning as direct dep
+- [ ] Split tools.rs into submodules when >500 lines (tools/events.rs, tools/memories.rs, etc.)
+- [ ] Shutdown drop ordering — add explicit drop after service.waiting()
+- [ ] `metadata` as String vs serde_json::Value for better LLM usability
+- [ ] AgentCore Memory parameter naming divergences — document in descriptions
+- [ ] `valid_only` default not reflected in schemars schema
+- [ ] `actor_id` required on consolidate/get/delete diverges from AgentCore
+- [ ] Platform-specific base dir doesn't follow XDG/Apple conventions
+- [ ] Add `LOCAL_MEMORY_SYNC=normal` warning log
+
+### From Component 9 code review (Medium/Low)
+- [ ] Define ToolError struct for typed error responses instead of hand-formatted JSON
+- [ ] Introduce EventResponse DTO for blob encoding instead of post-hoc JSON patching
+- [ ] Add pre-decode length check on base64 blob_data before decoding
+- [ ] Clamp all limit params to MAX_PAGE_LIMIT at tool handler level (not just recall)
+- [ ] Add explicit WAL checkpoint on shutdown (signal handler or post-service.waiting())
+- [ ] Add request-level timeout on spawn_blocking (tokio::time::timeout)
+- [ ] Use named constants for default pagination values instead of magic numbers
+- [ ] Add integration tests for MCP tool handlers (add_event blob path, store_memory, recall)
+- [ ] Add crate-level doc comment to lib.rs
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)

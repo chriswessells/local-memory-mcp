@@ -33,4 +33,10 @@
 | 2026-04-26 | Component 4 | 15 min | Code review: 5 personas, fixed 1 High (duplicated overfetch constants → consolidated to search.rs pub(crate)). Medium items logged to backlog. |
 | 2026-04-26 | Component 4 | 5 min | Fixed NaN/infinity embedding validation (security reviewer "do now" item). Defense-in-depth in both search.rs and db.rs. |
 | 2026-04-26 | Tracking | 5 min | Updated TODO.md, LESSONS_LEARNED.md, TIME_LOG.md for session close |
+| 2026-04-27 | Component 9 | 15 min | Read review personas, rmcp 1.5.0 source, existing business logic APIs |
+| 2026-04-27 | Component 9 | 20 min | Wrote detailed design: design/mcp-server.md (MemoryServer, run helper, 15 tools, param structs, main.rs) |
+| 2026-04-27 | Component 9 | 25 min | Design review: 5 personas, 1 Critical + 11 High. Resolved all: base64 blobs, typed enums, structured error codes, NaN validation, main returns Result, expanded descriptions |
+| 2026-04-27 | Component 9 | 25 min | Coding: tools.rs (653 lines, 15 tools, 4 tests), main.rs rewrite, memories.rs NaN fix, Cargo.toml deps |
+| 2026-04-27 | Component 9 | 15 min | Code review: 5 personas, fixed 2 issues (encode_event_blob error propagation, JSON escaping) |
+| 2026-04-27 | Component 9 | 10 min | Merge, update tracking files |
 | | | **~540 min** | **Total** |
