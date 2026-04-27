@@ -12,6 +12,41 @@ A compiled Rust binary that runs as an MCP server over stdio. It embeds SQLite (
 
 ---
 
+## Design Principle: API Compatibility with AgentCore Memory
+
+**An agent with a system prompt should be able to use either AgentCore Memory or local-memory-mcp and not know the difference.**
+
+This is the north-star design constraint. It means:
+
+1. **Same conceptual model**: Short-term events, long-term memories, actors, sessions, namespaces, strategies, branching, checkpointing — all work the same way. An agent prompt that says "store user preferences in the `/user/{actorId}/preferences` namespace using the `user_preference` strategy" should work identically against either backend.
+
+2. **Same tool semantics**: The MCP tools mirror AgentCore Memory's API operations. `memory.add_event` behaves like `CreateEvent`. `memory.recall` behaves like `RetrieveMemoryRecords`. `memory.store` behaves like the result of the extraction pipeline. Parameter names, return shapes, and error semantics should be close enough that a prompt written for one works for the other without modification.
+
+3. **Same data lifecycle**: Events are immutable. Memories are extracted from events. Memories can be consolidated (updated or invalidated). Superseded memories leave an audit trail. Namespaces organize memories hierarchically. Sessions group events chronologically.
+
+4. **Transparent differences**: The only differences an agent might notice are:
+   - **Extraction is explicit**: The agent calls `memory.store` instead of extraction happening automatically in the background. A prompt can handle this with: "After each conversation, extract key insights and store them as memories."
+   - **Embeddings are caller-provided**: The agent provides vectors instead of the server generating them. A prompt can handle this with: "When storing or recalling memories, generate an embedding for the content."
+   - **Store management is local-only**: `memory.switch_store`, `memory.list_stores`, etc. are additional tools that don't exist in AgentCore. An agent prompt can simply ignore them if targeting both backends.
+
+5. **Prompt portability**: A single system prompt like the following should work against either backend:
+
+   ```
+   You have access to a memory system. Use it to:
+   - Store conversation events with memory.add_event (actor_id, session_id, role, content)
+   - Extract and store insights with memory.store (actor_id, content, strategy, namespace)
+   - Recall relevant memories with memory.recall (actor_id, query, namespace)
+   - List past sessions with memory.list_sessions (actor_id)
+   - Consolidate outdated memories with memory.consolidate (memory_id, action)
+
+   Strategies: 'semantic' for facts, 'summary' for session summaries, 'user_preference' for preferences.
+   Organize memories in namespaces like /user/{actorId}/preferences, /user/{actorId}/facts.
+   ```
+
+This principle guides every tool name, parameter name, return format, and behavioral decision in the design. When in doubt, match AgentCore Memory's behavior.
+
+---
+
 ## Architecture
 
 ```
@@ -99,6 +134,7 @@ This project implements a local equivalent of each AgentCore Memory capability:
 - **No automatic async extraction pipeline**: In AgentCore, long-term memory extraction happens automatically in the background after events are created. Here, the agent explicitly calls `memory.store` when it has an insight to persist. The server is a storage layer, not an intelligence layer.
 - **Single-user**: No IAM, no encryption at rest (relies on OS file permissions), no multi-tenant access control.
 - **Local-first**: All data stays on disk. No network calls. No cloud dependency.
+- **Store management is additive**: `memory.switch_store`, `memory.list_stores`, etc. are local-only tools that don't exist in AgentCore. They extend the API without breaking compatibility — an agent prompt targeting both backends simply doesn't use them.
 
 ---
 
@@ -255,7 +291,7 @@ CREATE TABLE IF NOT EXISTS _meta (
 | `memory.list_checkpoints` | `session_id` | List checkpoints for a session |
 | `memory.list_branches` | `session_id` | List branches for a session |
 
-### Store management
+### Store management (local-only, not in AgentCore)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
