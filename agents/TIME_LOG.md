@@ -16,4 +16,9 @@
 | 2026-04-26 | Component 1 | 30 min | Coding phase: Tasks 1-6 via sub-agents, 23 tests passing, cargo check/test/clippy clean |
 | 2026-04-26 | Component 1 | 15 min | Code review: 5 personas, fixed 4 High findings (transaction, user_version, resolve_and_verify, transmute) |
 | 2026-04-26 | Component 1 | 10 min | Test pruning: removed 5 Medium/Low tests, added 3 missing Critical/High tests (locked db, symlink, canonicalize) |
-| | | **~250 min** | **Total** |
+| 2026-04-26 | Component 2 | 20 min | Wrote detailed design for event-tools.md (structs, Db trait methods, SQL, validation, DAG, sub-agent instructions) |
+| 2026-04-26 | Component 2 | 20 min | Design review: 5 personas, 1 Critical + 9 High + many Medium. Resolved all Critical/High, updated design, logged Medium to backlog |
+| 2026-04-26 | Component 2 | 15 min | Design re-review (round 2): 5 personas, 1 new High (timestamp DEFAULT divergence). Resolved, updated design. 0 Critical/0 High remaining — design approved |
+| 2026-04-26 | Component 2 | 25 min | Coding: events.rs (types, validation, business logic), Db trait methods + impls in db.rs, schema updates (ISO timestamps, expires_at index), 15 new tests, serde_bytes dep |
+| 2026-04-26 | Component 2 | 15 min | Code review: 5 personas, 0 Critical/0 High. Medium items logged to backlog. |
+| | | **~345 min** | **Total** |

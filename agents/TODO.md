@@ -13,6 +13,8 @@
 - [x] Create tracking files (this file, ADR, LESSONS_LEARNED, TIME_LOG)
 - [x] Component 1: Core DB layer — design (4 review rounds, 39 findings resolved), code (21 tests), code review (4 High fixed), merged to main
 
+- [x] Component 2: Event tools — design (2 review rounds), code (15 tests), code review (0 High), merged
+
 ## In Progress
 
 _(none)_
@@ -59,6 +61,24 @@ _(none)_
 - [ ] MCP `initialize` handshake behavior documentation
 - [ ] Embedding dimension configurable per-store via `_meta` key
 - [ ] Add minimal CI workflow before coding (not at Component 9)
+
+### From Component 2 design review (Medium/Low)
+- [ ] Use `serde_bytes` for `blob_data` serialization (avoid JSON integer arrays)
+- [ ] Add `metadata_filter` parameter to `get_events` Db trait (reserved slot, error if used initially)
+- [ ] Add CHECK constraints on `event_type IN ('conversation','blob')` and `role` values
+- [ ] Add immutability trigger on events table (`BEFORE UPDATE ... RAISE(ABORT)`)
+- [ ] Batch `delete_expired_events` with LIMIT to bound lock-hold time
+- [ ] Use named SQL parameters (`:name`) for all dynamic queries in get_events
+- [ ] Custom `Debug` impl for `Event` that redacts blob_data
+- [ ] Restrict `actor_id`/`session_id` to printable ASCII (reject control chars)
+- [ ] Validate metadata as JSON object with max depth (10) and max keys (100)
+- [ ] Enforce `expires_at` must be in the future
+- [ ] Handle cascading deletes for checkpoints/branches referencing expired events
+- [ ] Log deleted event IDs at debug level in `delete_expired_events`
+- [ ] Add `serde(rename)` for AgentCore field name compatibility in MCP response DTOs
+- [ ] Document blob_data base64 encoding convention for MCP JSON transport
+- [ ] Document MCP tool response envelope shapes (`{"event": {...}}`, `{"events": [...]}`)
+- [ ] Implement cursor-based pagination at MCP tool layer using `after` as cursor
 
 ### From Component 1 code review (Medium/Low)
 - [ ] close_active: use take() pattern to remove store before operating on it

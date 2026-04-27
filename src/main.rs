@@ -2,6 +2,7 @@
 
 mod db;
 mod error;
+mod events;
 mod store;
 
 fn main() {

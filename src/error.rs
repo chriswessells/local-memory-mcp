@@ -20,6 +20,8 @@ pub enum MemoryError {
     InvalidPath(String),
     #[error("Query failed: {0}")]
     QueryFailed(String),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
     #[error("Delete failed: {0}")]
     DeleteFailed(String),
     #[error("Database corrupted: {0}")]
