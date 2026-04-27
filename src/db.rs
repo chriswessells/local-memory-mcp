@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use crate::error::MemoryError;
 use crate::events::{BranchFilter, Event, GetEventsParams, InsertEventParams, SessionInfo};
+use crate::memories::{ConsolidateAction, InsertMemoryParams, ListMemoriesParams, Memory};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const EMBEDDING_DIM: u32 = 384;
@@ -279,11 +280,26 @@ pub trait Db {
     fn delete_expired_events(&self) -> Result<u64, MemoryError>;
 
     // -- Memories (Component 3) --
-    // fn insert_memory(...) -> Result<String, MemoryError>;
-    // fn get_memory(memory_id: &str) -> Result<Memory, MemoryError>;
-    // fn list_memories(...) -> Result<Vec<Memory>, MemoryError>;
-    // fn consolidate_memory(...) -> Result<(), MemoryError>; // atomic: invalidate old + insert new
-    // fn delete_memory(memory_id: &str) -> Result<(), MemoryError>;
+
+    /// Insert a memory. If embedding is provided, also inserts into memory_vec.
+    fn insert_memory(&self, params: &InsertMemoryParams<'_>) -> Result<Memory, MemoryError>;
+
+    /// Get a single memory by ID, scoped to actor.
+    fn get_memory(&self, actor_id: &str, memory_id: &str) -> Result<Memory, MemoryError>;
+
+    /// List memories with filters. Ordered by created_at DESC.
+    fn list_memories(&self, params: &ListMemoriesParams<'_>) -> Result<Vec<Memory>, MemoryError>;
+
+    /// Consolidate a memory, scoped to actor.
+    fn consolidate_memory(
+        &self,
+        actor_id: &str,
+        memory_id: &str,
+        action: &ConsolidateAction<'_>,
+    ) -> Result<Memory, MemoryError>;
+
+    /// Hard-delete a memory and its embedding, scoped to actor.
+    fn delete_memory(&self, actor_id: &str, memory_id: &str) -> Result<(), MemoryError>;
 
     // -- Search (Component 4) --
     // fn search_fts(actor_id: &str, query: &str, limit: u32) -> Result<Vec<Memory>, MemoryError>;
@@ -321,6 +337,27 @@ fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
         created_at: row.get(9)?,
         expires_at: row.get(10)?,
     })
+}
+
+fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
+    Ok(Memory {
+        id: row.get(0)?,
+        actor_id: row.get(1)?,
+        namespace: row.get(2)?,
+        strategy: row.get(3)?,
+        content: row.get(4)?,
+        metadata: row.get(5)?,
+        source_session_id: row.get(6)?,
+        is_valid: row.get::<_, i32>(7)? != 0,
+        superseded_by: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+/// Escape LIKE wildcards in a string for safe prefix matching.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 impl Db for Connection {
@@ -507,6 +544,292 @@ impl Db for Connection {
                 MemoryError::QueryFailed("failed to delete expired events".into())
             })?;
         Ok(count as u64)
+    }
+
+    // -- Memories (Component 3) --
+
+    fn insert_memory(&self, params: &InsertMemoryParams<'_>) -> Result<Memory, MemoryError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let namespace = params.namespace.unwrap_or("default");
+
+        if let Some(emb) = params.embedding {
+            let tx = self.unchecked_transaction().map_err(|e| {
+                tracing::error!("insert_memory transaction failed: {e}");
+                MemoryError::QueryFailed("failed to begin transaction".into())
+            })?;
+
+            let memory = tx.query_row(
+                "INSERT INTO memories (id, actor_id, namespace, strategy, content, metadata, source_session_id)
+                 VALUES (:id, :actor_id, :namespace, :strategy, :content, :metadata, :source_session_id)
+                 RETURNING id, actor_id, namespace, strategy, content, metadata, source_session_id,
+                           is_valid, superseded_by, created_at, updated_at",
+                rusqlite::named_params! {
+                    ":id": id,
+                    ":actor_id": params.actor_id,
+                    ":namespace": namespace,
+                    ":strategy": params.strategy,
+                    ":content": params.content,
+                    ":metadata": params.metadata,
+                    ":source_session_id": params.source_session_id,
+                },
+                row_to_memory,
+            ).map_err(|e| {
+                tracing::error!("insert_memory failed: {e}");
+                MemoryError::QueryFailed("failed to insert memory".into())
+            })?;
+
+            let emb_bytes: Vec<u8> = emb.iter().flat_map(|f| f.to_le_bytes()).collect();
+            tx.execute(
+                "INSERT INTO memory_vec (memory_id, embedding) VALUES (:id, :embedding)",
+                rusqlite::named_params! { ":id": memory.id, ":embedding": emb_bytes },
+            ).map_err(|e| {
+                tracing::error!("insert_memory embedding failed: {e}");
+                MemoryError::QueryFailed("failed to insert embedding".into())
+            })?;
+
+            tx.commit().map_err(|e| {
+                tracing::error!("insert_memory commit failed: {e}");
+                MemoryError::QueryFailed("failed to commit memory insert".into())
+            })?;
+
+            Ok(memory)
+        } else {
+            self.query_row(
+                "INSERT INTO memories (id, actor_id, namespace, strategy, content, metadata, source_session_id)
+                 VALUES (:id, :actor_id, :namespace, :strategy, :content, :metadata, :source_session_id)
+                 RETURNING id, actor_id, namespace, strategy, content, metadata, source_session_id,
+                           is_valid, superseded_by, created_at, updated_at",
+                rusqlite::named_params! {
+                    ":id": id,
+                    ":actor_id": params.actor_id,
+                    ":namespace": namespace,
+                    ":strategy": params.strategy,
+                    ":content": params.content,
+                    ":metadata": params.metadata,
+                    ":source_session_id": params.source_session_id,
+                },
+                row_to_memory,
+            ).map_err(|e| {
+                tracing::error!("insert_memory failed: {e}");
+                MemoryError::QueryFailed("failed to insert memory".into())
+            })
+        }
+    }
+
+    fn get_memory(&self, actor_id: &str, memory_id: &str) -> Result<Memory, MemoryError> {
+        self.query_row(
+            "SELECT id, actor_id, namespace, strategy, content, metadata, source_session_id,
+                    is_valid, superseded_by, created_at, updated_at
+             FROM memories WHERE id = :id AND actor_id = :actor_id",
+            rusqlite::named_params! { ":id": memory_id, ":actor_id": actor_id },
+            row_to_memory,
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(memory_id.to_string()),
+            _ => {
+                tracing::error!("get_memory failed: {e}");
+                MemoryError::QueryFailed("failed to get memory".into())
+            }
+        })
+    }
+
+    fn list_memories(&self, params: &ListMemoriesParams<'_>) -> Result<Vec<Memory>, MemoryError> {
+        let mut sql = String::from(
+            "SELECT id, actor_id, namespace, strategy, content, metadata, source_session_id,
+                    is_valid, superseded_by, created_at, updated_at
+             FROM memories WHERE actor_id = ?1",
+        );
+        let mut bind_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        bind_values.push(Box::new(params.actor_id.to_string()));
+
+        if let Some(ns) = params.namespace {
+            bind_values.push(Box::new(ns.to_string()));
+            sql.push_str(&format!(" AND namespace = ?{}", bind_values.len()));
+        }
+        if let Some(prefix) = params.namespace_prefix {
+            let escaped = format!("{}%", escape_like(prefix));
+            bind_values.push(Box::new(escaped));
+            sql.push_str(&format!(" AND namespace LIKE ?{} ESCAPE '\\'", bind_values.len()));
+        }
+        if let Some(strategy) = params.strategy {
+            bind_values.push(Box::new(strategy.to_string()));
+            sql.push_str(&format!(" AND strategy = ?{}", bind_values.len()));
+        }
+        if params.valid_only {
+            sql.push_str(" AND is_valid = 1");
+        }
+
+        bind_values.push(Box::new(params.limit));
+        let limit_idx = bind_values.len();
+        bind_values.push(Box::new(params.offset));
+        let offset_idx = bind_values.len();
+        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+
+        let mut stmt = self.prepare(&sql).map_err(|e| {
+            tracing::error!("list_memories prepare failed: {e}");
+            MemoryError::QueryFailed("failed to prepare list_memories query".into())
+        })?;
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            bind_values.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), row_to_memory).map_err(|e| {
+            tracing::error!("list_memories query failed: {e}");
+            MemoryError::QueryFailed("failed to query memories".into())
+        })?;
+
+        let mut memories = Vec::new();
+        for row in rows {
+            memories.push(row.map_err(|e| {
+                tracing::error!("list_memories row read failed: {e}");
+                MemoryError::QueryFailed("failed to read memory row".into())
+            })?);
+        }
+        Ok(memories)
+    }
+
+    fn consolidate_memory(
+        &self,
+        actor_id: &str,
+        memory_id: &str,
+        action: &ConsolidateAction<'_>,
+    ) -> Result<Memory, MemoryError> {
+        match action {
+            ConsolidateAction::Update { content, embedding } => {
+                let tx = self.unchecked_transaction().map_err(|e| {
+                    tracing::error!("consolidate_memory transaction failed: {e}");
+                    MemoryError::QueryFailed("failed to begin transaction".into())
+                })?;
+
+                // 1. Fetch old memory to get namespace/strategy
+                let (old_namespace, old_strategy): (String, String) = tx.query_row(
+                    "SELECT namespace, strategy FROM memories
+                     WHERE id = :id AND actor_id = :actor_id AND is_valid = 1",
+                    rusqlite::named_params! { ":id": memory_id, ":actor_id": actor_id },
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                ).map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(memory_id.to_string()),
+                    _ => {
+                        tracing::error!("consolidate_memory fetch failed: {e}");
+                        MemoryError::QueryFailed("failed to fetch memory for consolidation".into())
+                    }
+                })?;
+
+                // 2. Insert new memory
+                let new_id = uuid::Uuid::new_v4().to_string();
+                let new_memory = tx.query_row(
+                    "INSERT INTO memories (id, actor_id, namespace, strategy, content)
+                     VALUES (:id, :actor_id, :namespace, :strategy, :content)
+                     RETURNING id, actor_id, namespace, strategy, content, metadata, source_session_id,
+                               is_valid, superseded_by, created_at, updated_at",
+                    rusqlite::named_params! {
+                        ":id": new_id,
+                        ":actor_id": actor_id,
+                        ":namespace": old_namespace,
+                        ":strategy": old_strategy,
+                        ":content": content,
+                    },
+                    row_to_memory,
+                ).map_err(|e| {
+                    tracing::error!("consolidate_memory insert failed: {e}");
+                    MemoryError::QueryFailed("failed to insert consolidated memory".into())
+                })?;
+
+                // 3. Mark old memory invalid
+                tx.execute(
+                    "UPDATE memories SET is_valid = 0, superseded_by = :new_id,
+                            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                     WHERE id = :old_id AND actor_id = :actor_id AND is_valid = 1",
+                    rusqlite::named_params! {
+                        ":new_id": new_memory.id,
+                        ":old_id": memory_id,
+                        ":actor_id": actor_id,
+                    },
+                ).map_err(|e| {
+                    tracing::error!("consolidate_memory update failed: {e}");
+                    MemoryError::QueryFailed("failed to invalidate old memory".into())
+                })?;
+
+                // 4. Delete old embedding
+                tx.execute(
+                    "DELETE FROM memory_vec WHERE memory_id = :id",
+                    rusqlite::named_params! { ":id": memory_id },
+                ).map_err(|e| {
+                    tracing::error!("consolidate_memory delete old embedding failed: {e}");
+                    MemoryError::QueryFailed("failed to delete old embedding".into())
+                })?;
+
+                // 5. Insert new embedding if provided
+                if let Some(emb) = embedding {
+                    let emb_bytes: Vec<u8> = emb.iter().flat_map(|f| f.to_le_bytes()).collect();
+                    tx.execute(
+                        "INSERT INTO memory_vec (memory_id, embedding) VALUES (:id, :embedding)",
+                        rusqlite::named_params! { ":id": new_memory.id, ":embedding": emb_bytes },
+                    ).map_err(|e| {
+                        tracing::error!("consolidate_memory insert embedding failed: {e}");
+                        MemoryError::QueryFailed("failed to insert new embedding".into())
+                    })?;
+                }
+
+                tx.commit().map_err(|e| {
+                    tracing::error!("consolidate_memory commit failed: {e}");
+                    MemoryError::QueryFailed("failed to commit consolidation".into())
+                })?;
+
+                Ok(new_memory)
+            }
+            ConsolidateAction::Invalidate => {
+                self.query_row(
+                    "UPDATE memories SET is_valid = 0,
+                            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                     WHERE id = :id AND actor_id = :actor_id AND is_valid = 1
+                     RETURNING id, actor_id, namespace, strategy, content, metadata, source_session_id,
+                               is_valid, superseded_by, created_at, updated_at",
+                    rusqlite::named_params! { ":id": memory_id, ":actor_id": actor_id },
+                    row_to_memory,
+                ).map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => MemoryError::NotFound(memory_id.to_string()),
+                    _ => {
+                        tracing::error!("consolidate_memory invalidate failed: {e}");
+                        MemoryError::QueryFailed("failed to invalidate memory".into())
+                    }
+                })
+            }
+        }
+    }
+
+    fn delete_memory(&self, actor_id: &str, memory_id: &str) -> Result<(), MemoryError> {
+        let tx = self.unchecked_transaction().map_err(|e| {
+            tracing::error!("delete_memory transaction failed: {e}");
+            MemoryError::QueryFailed("failed to begin transaction".into())
+        })?;
+
+        // Delete from memories first (verifies actor ownership)
+        let count = tx.execute(
+            "DELETE FROM memories WHERE id = :id AND actor_id = :actor_id",
+            rusqlite::named_params! { ":id": memory_id, ":actor_id": actor_id },
+        ).map_err(|e| {
+            tracing::error!("delete_memory failed: {e}");
+            MemoryError::QueryFailed("failed to delete memory".into())
+        })?;
+
+        if count == 0 {
+            return Err(MemoryError::NotFound(memory_id.to_string()));
+        }
+
+        // Delete embedding (only reached if ownership verified)
+        tx.execute(
+            "DELETE FROM memory_vec WHERE memory_id = :id",
+            rusqlite::named_params! { ":id": memory_id },
+        ).map_err(|e| {
+            tracing::error!("delete_memory embedding failed: {e}");
+            MemoryError::QueryFailed("failed to delete embedding".into())
+        })?;
+
+        tx.commit().map_err(|e| {
+            tracing::error!("delete_memory commit failed: {e}");
+            MemoryError::QueryFailed("failed to commit memory deletion".into())
+        })?;
+
+        Ok(())
     }
 }
 
@@ -859,5 +1182,293 @@ mod tests {
 
         let fetched = conn.get_event("a1", &event.id).unwrap();
         assert_eq!(fetched.blob_data.as_deref(), Some(blob_data.as_slice()));
+    }
+
+    // -- Memory tests (Component 3) --
+
+    use crate::memories::{InsertMemoryParams, ListMemoriesParams, ConsolidateAction};
+
+    fn mem_params<'a>(actor: &'a str, content: &'a str, strategy: &'a str) -> InsertMemoryParams<'a> {
+        InsertMemoryParams {
+            actor_id: actor,
+            content,
+            strategy,
+            namespace: None,
+            metadata: None,
+            source_session_id: None,
+            embedding: None,
+        }
+    }
+
+    #[test]
+    fn test_insert_and_get_memory() {
+        let (_dir, conn) = open_temp();
+        let memory = conn.insert_memory(&mem_params("actor1", "Rust is great", "semantic")).unwrap();
+        assert_eq!(memory.actor_id, "actor1");
+        assert_eq!(memory.content, "Rust is great");
+        assert_eq!(memory.strategy, "semantic");
+        assert_eq!(memory.namespace, "default");
+        assert!(memory.is_valid);
+        assert!(memory.superseded_by.is_none());
+        assert!(memory.created_at.ends_with('Z'));
+        assert!(!memory.id.is_empty());
+
+        let fetched = conn.get_memory("actor1", &memory.id).unwrap();
+        assert_eq!(fetched.id, memory.id);
+        assert_eq!(fetched.content, memory.content);
+    }
+
+    #[test]
+    fn test_insert_memory_with_embedding() {
+        let (_dir, conn) = open_temp();
+        let embedding = vec![0.1f32; 384];
+        let memory = conn.insert_memory(&InsertMemoryParams {
+            embedding: Some(&embedding),
+            ..mem_params("actor1", "with vector", "semantic")
+        }).unwrap();
+
+        // Verify embedding exists in memory_vec
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM memory_vec WHERE memory_id = ?1",
+            [&memory.id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_insert_memory_default_namespace() {
+        let (_dir, conn) = open_temp();
+        let memory = conn.insert_memory(&mem_params("a1", "content", "semantic")).unwrap();
+        assert_eq!(memory.namespace, "default");
+
+        let memory2 = conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/custom/ns"),
+            ..mem_params("a1", "content2", "semantic")
+        }).unwrap();
+        assert_eq!(memory2.namespace, "/custom/ns");
+    }
+
+    #[test]
+    fn test_get_memory_not_found() {
+        let (_dir, conn) = open_temp();
+        let result = conn.get_memory("actor1", "nonexistent");
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_get_memory_wrong_actor() {
+        let (_dir, conn) = open_temp();
+        let memory = conn.insert_memory(&mem_params("actor1", "content", "semantic")).unwrap();
+        let result = conn.get_memory("actor2", &memory.id);
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_list_memories_by_actor() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&mem_params("a1", "m1", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "m2", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a2", "m3", "semantic")).unwrap();
+
+        let results = conn.list_memories(&ListMemoriesParams {
+            actor_id: "a1", namespace: None, namespace_prefix: None,
+            strategy: None, valid_only: false, limit: 100, offset: 0,
+        }).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|m| m.actor_id == "a1"));
+    }
+
+    #[test]
+    fn test_list_memories_by_namespace() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/prefs"),
+            ..mem_params("a1", "m1", "semantic")
+        }).unwrap();
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/facts"),
+            ..mem_params("a1", "m2", "semantic")
+        }).unwrap();
+
+        let results = conn.list_memories(&ListMemoriesParams {
+            actor_id: "a1", namespace: Some("/prefs"), namespace_prefix: None,
+            strategy: None, valid_only: false, limit: 100, offset: 0,
+        }).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].namespace, "/prefs");
+    }
+
+    #[test]
+    fn test_list_memories_by_namespace_prefix() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/user/prefs"),
+            ..mem_params("a1", "m1", "semantic")
+        }).unwrap();
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/user/facts"),
+            ..mem_params("a1", "m2", "semantic")
+        }).unwrap();
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/system"),
+            ..mem_params("a1", "m3", "semantic")
+        }).unwrap();
+
+        let results = conn.list_memories(&ListMemoriesParams {
+            actor_id: "a1", namespace: None, namespace_prefix: Some("/user"),
+            strategy: None, valid_only: false, limit: 100, offset: 0,
+        }).unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Test LIKE escaping: underscore in prefix should be literal
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/user_data/x"),
+            ..mem_params("a1", "m4", "semantic")
+        }).unwrap();
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/userXdata/x"),
+            ..mem_params("a1", "m5", "semantic")
+        }).unwrap();
+
+        let results = conn.list_memories(&ListMemoriesParams {
+            actor_id: "a1", namespace: None, namespace_prefix: Some("/user_data"),
+            strategy: None, valid_only: false, limit: 100, offset: 0,
+        }).unwrap();
+        // Should match "/user_data/x" but NOT "/userXdata/x"
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].namespace, "/user_data/x");
+    }
+
+    #[test]
+    fn test_list_memories_by_strategy() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&mem_params("a1", "m1", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "m2", "summary")).unwrap();
+
+        let results = conn.list_memories(&ListMemoriesParams {
+            actor_id: "a1", namespace: None, namespace_prefix: None,
+            strategy: Some("summary"), valid_only: false, limit: 100, offset: 0,
+        }).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].strategy, "summary");
+    }
+
+    #[test]
+    fn test_list_memories_valid_only() {
+        let (_dir, conn) = open_temp();
+        let m = conn.insert_memory(&mem_params("a1", "old", "semantic")).unwrap();
+        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate).unwrap();
+        conn.insert_memory(&mem_params("a1", "valid", "semantic")).unwrap();
+
+        let valid = conn.list_memories(&ListMemoriesParams {
+            actor_id: "a1", namespace: None, namespace_prefix: None,
+            strategy: None, valid_only: true, limit: 100, offset: 0,
+        }).unwrap();
+        assert_eq!(valid.len(), 1);
+        assert_eq!(valid[0].content, "valid");
+
+        let all = conn.list_memories(&ListMemoriesParams {
+            actor_id: "a1", namespace: None, namespace_prefix: None,
+            strategy: None, valid_only: false, limit: 100, offset: 0,
+        }).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_list_memories_pagination() {
+        let (_dir, conn) = open_temp();
+        for i in 0..5 {
+            conn.insert_memory(&mem_params("a1", &format!("m{i}"), "semantic")).unwrap();
+        }
+        let results = conn.list_memories(&ListMemoriesParams {
+            actor_id: "a1", namespace: None, namespace_prefix: None,
+            strategy: None, valid_only: false, limit: 2, offset: 1,
+        }).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_consolidate_update() {
+        let (_dir, conn) = open_temp();
+        let old = conn.insert_memory(&mem_params("a1", "old content", "semantic")).unwrap();
+
+        let new = conn.consolidate_memory(
+            "a1", &old.id,
+            &ConsolidateAction::Update { content: "new content", embedding: None },
+        ).unwrap();
+
+        assert_ne!(new.id, old.id);
+        assert_eq!(new.content, "new content");
+        assert_eq!(new.namespace, old.namespace);
+        assert_eq!(new.strategy, old.strategy);
+        assert!(new.is_valid);
+
+        // Old memory should be invalid with superseded_by
+        let old_fetched = conn.get_memory("a1", &old.id).unwrap();
+        assert!(!old_fetched.is_valid);
+        assert_eq!(old_fetched.superseded_by.as_deref(), Some(new.id.as_str()));
+    }
+
+    #[test]
+    fn test_consolidate_invalidate() {
+        let (_dir, conn) = open_temp();
+        let m = conn.insert_memory(&mem_params("a1", "content", "semantic")).unwrap();
+
+        let invalidated = conn.consolidate_memory(
+            "a1", &m.id, &ConsolidateAction::Invalidate,
+        ).unwrap();
+
+        assert!(!invalidated.is_valid);
+        assert_eq!(invalidated.id, m.id);
+    }
+
+    #[test]
+    fn test_consolidate_already_invalid() {
+        let (_dir, conn) = open_temp();
+        let m = conn.insert_memory(&mem_params("a1", "content", "semantic")).unwrap();
+        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate).unwrap();
+
+        // Second invalidation should fail
+        let result = conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate);
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_delete_memory() {
+        let (_dir, conn) = open_temp();
+        let embedding = vec![0.1f32; 384];
+        let m = conn.insert_memory(&InsertMemoryParams {
+            embedding: Some(&embedding),
+            ..mem_params("a1", "to delete", "semantic")
+        }).unwrap();
+
+        conn.delete_memory("a1", &m.id).unwrap();
+
+        // Memory should be gone
+        assert!(matches!(conn.get_memory("a1", &m.id), Err(MemoryError::NotFound(_))));
+
+        // Embedding should be gone
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM memory_vec WHERE memory_id = ?1",
+            [&m.id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_delete_memory_not_found() {
+        let (_dir, conn) = open_temp();
+        let result = conn.delete_memory("a1", "nonexistent");
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_delete_memory_wrong_actor() {
+        let (_dir, conn) = open_temp();
+        let m = conn.insert_memory(&mem_params("actor1", "content", "semantic")).unwrap();
+        let result = conn.delete_memory("actor2", &m.id);
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
     }
 }

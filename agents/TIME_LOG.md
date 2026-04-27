@@ -21,4 +21,9 @@
 | 2026-04-26 | Component 2 | 15 min | Design re-review (round 2): 5 personas, 1 new High (timestamp DEFAULT divergence). Resolved, updated design. 0 Critical/0 High remaining — design approved |
 | 2026-04-26 | Component 2 | 25 min | Coding: events.rs (types, validation, business logic), Db trait methods + impls in db.rs, schema updates (ISO timestamps, expires_at index), 15 new tests, serde_bytes dep |
 | 2026-04-26 | Component 2 | 15 min | Code review: 5 personas, 0 Critical/0 High. Medium items logged to backlog. |
-| | | **~345 min** | **Total** |
+| 2026-04-26 | Component 3 | 20 min | Wrote detailed design for memory-tools.md (structs, Db trait methods, SQL, validation, DAG, sub-agent instructions) |
+| 2026-04-26 | Component 3 | 20 min | Design review: 5 personas, 4 High (actor_id scoping, ConsolidateAction data, LIKE escaping, delete transaction). All resolved. |
+| 2026-04-26 | Component 3 | 10 min | Design re-review (round 2): 2 new High (delete ordering, vec0 transaction risk). Both resolved. 0 Critical/0 High remaining — design approved. |
+| 2026-04-26 | Component 3 | 25 min | Coding: memories.rs (types, validation, business logic), Db trait methods + impls in db.rs, escape_like helper, 23 new tests, 59 total passing |
+| 2026-04-26 | Component 3 | 15 min | Code review: 5 personas, 1 High (consolidate UPDATE missing actor_id+is_valid). Fixed. Medium items logged to backlog. |
+| | | **~435 min** | **Total** |

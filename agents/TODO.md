@@ -15,6 +15,8 @@
 
 - [x] Component 2: Event tools — design (2 review rounds), code (15 tests), code review (0 High), merged
 
+- [x] Component 3: Memory tools — design (2 review rounds, 6 High resolved), code (23 tests), code review (1 High fixed), merged
+
 ## In Progress
 
 _(none)_
@@ -92,6 +94,30 @@ _(none)_
 - [ ] Add tracing::info! on successful lifecycle events (open, migrate, switch, close)
 - [ ] Set 0o600 permissions on individual .db files after creation (Unix)
 - [ ] Windows has_bad_prefix: also reject \\.\\ and \\?\\ prefixes
+
+### From Component 3 design review (Medium/Low)
+- [ ] Extract shared validation helpers to `src/validation.rs` (avoid duplication across modules)
+- [ ] Split `db.rs` into module directory (`db/mod.rs`, `db/events.rs`, `db/memories.rs`)
+- [ ] Use named column access in `row_to_memory` instead of positional indices
+- [ ] Add optional `new_metadata` to consolidate Update, or document metadata not inherited
+- [ ] Document consolidation embedding behavior: old embedding always deleted
+- [ ] Add database size quota check before inserts (`MAX_STORE_SIZE_BYTES`)
+- [ ] Unify permission hardening in `with_base_dir` (currently skips `chmod 0o700`)
+- [ ] Log warning when `LOCAL_MEMORY_SYNC=normal` downgrades durability
+- [ ] Add startup consistency check: valid memories missing `memory_vec` rows → warn
+- [ ] Verify `sqlite-vec` vec0 virtual tables participate in SQLite transaction rollback
+- [ ] Add `memory_fts` rebuild procedure (`INSERT INTO memory_fts(memory_fts) VALUES('rebuild')`)
+- [ ] LIKE escaping: document that namespace_prefix `%` and `_` are escaped before query
+
+### From Component 3 code review (Medium/Low)
+- [ ] Deduplicate INSERT SQL in insert_memory (extract helper or always use transaction)
+- [ ] Consolidate Invalidate: delete embedding from memory_vec for consistency with Update
+- [ ] Use `row.get::<_, bool>()` instead of `row.get::<_, i32>() != 0` in row_to_memory
+- [ ] Add `#[serde(skip_serializing_if = "Option::is_none")]` to Memory optional fields
+- [ ] Add max-length validation on `memory_id` and `source_session_id` inputs
+- [ ] Add `validate_max_len` for `actor_id` in get/consolidate/delete (consistency with store)
+- [ ] Document `unchecked_transaction` invariant: safe under EXCLUSIVE locking mode
+- [ ] Add comment on consolidate_memory: metadata/source_session_id intentionally not inherited
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)

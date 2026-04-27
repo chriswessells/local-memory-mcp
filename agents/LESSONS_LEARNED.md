@@ -49,3 +49,13 @@ Capture what went wrong, what surprised us, and what we'd do differently.
 - **SQLite EXCLUSIVE locking is per-process, not per-connection.** Two connections from the same process share the lock. Cross-process lock testing requires spawning a child process or using a raw connection with `BEGIN IMMEDIATE` held open.
 
 - **Only test Critical and High code paths.** Medium/Low tests add maintenance burden without protecting against real failures. Rank every test by the severity of the code path it covers and cut the rest.
+
+## From Component 3 (Memory tools)
+
+- **Actor-scoping must be consistent across all operations.** The design initially had `get_memory(memory_id)` without actor_id, while `get_event(actor_id, event_id)` required it. The architecture reviewer caught this immediately. Lesson: when establishing a pattern (actor-scoped access), apply it uniformly from the start.
+
+- **Make invalid states unrepresentable.** The initial `ConsolidateAction` enum was `Update` / `Invalidate` with separate `Option<&str>` params for content and embedding. The reviewer correctly pointed out that `Invalidate` with `new_content = Some(...)` was representable but invalid. Moving the data into the enum variants (`Update { content, embedding }`) eliminated the entire class of bugs at compile time.
+
+- **LIKE queries need wildcard escaping.** `namespace_prefix` used `LIKE :prefix || '%'` which allowed `_` and `%` in user input to act as wildcards, bypassing namespace scoping. Always escape LIKE metacharacters with `ESCAPE '\'`.
+
+- **Transaction ordering matters for ownership verification.** `delete_memory` initially deleted from `memory_vec` first, then from `memories` with actor_id check. If the actor check failed, the embedding was already gone. Reordering to verify ownership first (delete from `memories`) before touching `memory_vec` prevents this.

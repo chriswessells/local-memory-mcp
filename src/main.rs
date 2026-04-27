@@ -3,6 +3,7 @@
 mod db;
 mod error;
 mod events;
+mod memories;
 mod store;
 
 fn main() {
