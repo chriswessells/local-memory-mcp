@@ -22,4 +22,8 @@ pub enum MemoryError {
     QueryFailed(String),
     #[error("Delete failed: {0}")]
     DeleteFailed(String),
+    #[error("Database corrupted: {0}")]
+    DatabaseCorrupted(String),
+    #[error("Store is locked by another process: {0}")]
+    StoreLocked(String),
 }

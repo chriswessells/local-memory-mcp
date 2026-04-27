@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Components 2-8 will consume these; suppress until then
+
 pub mod db;
 pub mod error;
 pub mod store;

@@ -84,3 +84,21 @@
 **What changed**: Entire project scope and storage engine.
 **Why**: The original kiro-graph project was a knowledge graph tool using SurrealDB. After evaluating the SurrealDB BSL 1.1 license, researching alternatives, and clarifying the actual need (agent memory, not a general graph database), we pivoted to a focused agent memory server using SQLite.
 **Rewrite scope**: Full design rewrite. Carried forward: development workflow, review personas, tracking files, lessons learned, Rust + rmcp + stdio decisions.
+
+---
+
+## ADR-007: Db trait as API contract boundary
+
+**Date**: 2026-04-26
+**Status**: Accepted
+
+**Context**: Components 2-7 (events, memories, graph, search, sessions, namespaces) all need database access. The original design exposed `&Connection` directly via `StoreManager::conn()`. This means every component writes raw SQL, creating conflicts when multiple coding agents work in parallel — they'd step on each other's query patterns, error handling, and table access assumptions.
+
+**Alternatives considered**:
+1. **Raw `&Connection`** — Simple, but no contract boundary. Parallel agents conflict on SQL. Schema changes require updating every module.
+2. **Repository pattern per component** — Each module has its own `EventRepo`, `MemoryRepo`, etc. Clean separation but duplicates connection management and makes cross-cutting queries (e.g., search across events + memories) awkward.
+3. **Single `Db` trait** — One trait with all data operations. Implemented for `Connection`. Components call trait methods. All SQL in one place.
+
+**Decision**: Single `Db` trait in `db.rs`. `StoreManager::db()` returns `&dyn Db`. The trait starts with store management methods in Component 1 and grows as each component adds its method signatures during its design phase. All SQL lives in `impl Db for Connection`.
+
+**Consequences**: Slightly more upfront design work per component (must define trait method signatures before coding). But parallel agents can work independently against the trait contract. Schema changes are single-file. No SQL scattered across modules.

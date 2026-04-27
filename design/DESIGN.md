@@ -57,6 +57,43 @@ This principle guides every tool name, parameter name, return format, and behavi
 
 ---
 
+## Design Principle: API Contracts for Parallel Development
+
+**Components communicate through trait-based API contracts, not shared implementation details.**
+
+This is the internal development constraint. It means:
+
+1. **Trait boundaries between components**: The core DB layer exposes a `Db` trait that provides typed methods for each data operation (insert event, query memories, add edge, etc.). Downstream components (events.rs, memories.rs, graph.rs, search.rs) call trait methods — they never write raw SQL or access `rusqlite::Connection` directly.
+
+2. **Parallel agent safety**: Multiple coding agents can implement different components simultaneously without conflicting. Agent A implementing events.rs and Agent B implementing memories.rs both code against the `Db` trait's method signatures. Neither needs to know the other's SQL, error handling, or query patterns. The trait is the contract.
+
+3. **Single SQL owner**: All SQL lives in one place — the `Db` trait implementation in `db.rs`. This eliminates SQL scattered across modules, prevents duplicate/conflicting queries, and makes schema changes a single-file concern.
+
+4. **Testability**: Components can be tested with a real SQLite `Db` implementation (in-memory or tempfile) without mocking. The trait also enables future mock implementations if needed.
+
+5. **How it works in practice**:
+
+   ```
+   ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+   │  tools.rs    │────►│  events.rs   │────►│  Db trait    │
+   │  (MCP layer) │     │  memories.rs │     │  (db.rs)     │
+   │              │     │  graph.rs    │     │              │
+   │              │     │  search.rs   │     │  impl Db for │
+   │              │     │              │     │  Connection   │
+   └─────────────┘     └──────────────┘     └─────────────┘
+        Component 8      Components 2-7        Component 1
+   ```
+
+   - Component 1 defines the `Db` trait with all method signatures and implements it for `rusqlite::Connection`
+   - Components 2-7 accept `&dyn Db` (or `&impl Db`) and call trait methods
+   - Component 8 wires everything together
+
+6. **Contract-first development**: The `Db` trait is designed and reviewed as part of Component 1. Once approved, it becomes the stable interface that all other components depend on. Changes to the trait require updating all consumers — this is intentional friction that prevents silent breakage.
+
+This principle guides every internal API boundary. When in doubt, add a method to the `Db` trait rather than exposing the connection.
+
+---
+
 ## Architecture
 
 ```
@@ -191,7 +228,8 @@ CREATE INDEX IF NOT EXISTS idx_events_actor ON events(actor_id, created_at);
 
 ```sql
 CREATE TABLE IF NOT EXISTS memories (
-    id TEXT PRIMARY KEY,           -- UUID
+    memory_rowid INTEGER PRIMARY KEY,  -- stable rowid for FTS5 content-sync
+    id TEXT UNIQUE NOT NULL,       -- UUID (logical primary key for API/FK references)
     actor_id TEXT NOT NULL,
     namespace TEXT DEFAULT 'default',
     strategy TEXT NOT NULL,        -- 'semantic', 'summary', 'user_preference', 'custom'
@@ -227,6 +265,7 @@ CREATE INDEX IF NOT EXISTS idx_edges_label ON knowledge_edges(label);
 
 ```sql
 -- sqlite-vec virtual table for vector similarity search
+-- Joins to memories via: memory_vec.memory_id = memories.id (TEXT UUID)
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0(
     memory_id TEXT PRIMARY KEY,
     embedding float[384]           -- dimension matches embedding model
@@ -236,12 +275,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0(
 ### Full-text search
 
 ```sql
+-- FTS5 content-sync table
+-- Joins to memories via: memory_fts.rowid = memories.memory_rowid (INTEGER)
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     content,
     content=memories,
-    content_rowid=rowid
+    content_rowid=memory_rowid
 );
 ```
+
+**Key mapping for search.rs**: `memory_vec` uses `memories.id` (TEXT UUID) as its key. `memory_fts` uses `memories.memory_rowid` (INTEGER) as its rowid. Combined search queries must join through the `memories` table: `memory_fts.rowid = memories.memory_rowid` and `memory_vec.memory_id = memories.id`.
 
 ### Namespaces
 
@@ -284,12 +327,7 @@ CREATE INDEX IF NOT EXISTS idx_branches_session ON branches(session_id);
 
 ### Schema version
 
-```sql
-CREATE TABLE IF NOT EXISTS _meta (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-```
+Schema version is tracked via `PRAGMA user_version` (built-in SQLite integer in the database header). No separate table needed. See `design/core-db-layer.md` for migration strategy.
 
 ---
 
