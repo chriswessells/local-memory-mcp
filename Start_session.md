@@ -13,7 +13,10 @@ local-memory-mcp/
 ├── Start_session.md          ← You are here
 ├── design/                   # All designs, plans, and instructions
 │   ├── DESIGN.md             # Main design document
-│   └── core-db-layer.md      # Detailed design for db.rs + store.rs
+│   ├── core-db-layer.md      # Detailed design for db.rs + store.rs
+│   ├── event-tools.md        # Detailed design for events.rs
+│   ├── memory-tools.md       # Detailed design for memories.rs
+│   └── search.md             # Detailed design for search.rs
 ├── agents/                   # Review personas, workflow, and tracking
 │   ├── WORKFLOW.md            # Development process: phases, gates, review execution
 │   ├── sec_review.md          # Security reviewer persona

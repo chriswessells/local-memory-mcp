@@ -59,3 +59,19 @@ Capture what went wrong, what surprised us, and what we'd do differently.
 - **LIKE queries need wildcard escaping.** `namespace_prefix` used `LIKE :prefix || '%'` which allowed `_` and `%` in user input to act as wildcards, bypassing namespace scoping. Always escape LIKE metacharacters with `ESCAPE '\'`.
 
 - **Transaction ordering matters for ownership verification.** `delete_memory` initially deleted from `memory_vec` first, then from `memories` with actor_id check. If the actor check failed, the embedding was already gone. Reordering to verify ownership first (delete from `memories`) before touching `memory_vec` prevents this.
+
+## From Component 4 (Search)
+
+- **Constants that cross module boundaries must have a single source of truth.** The overfetch constants (`VECTOR_OVERFETCH_FACTOR`, `MAX_K_OVERFETCH`) were defined in `search.rs` and duplicated as local constants in `db.rs::search_vector` with different names. All 5 code reviewers flagged this. Define once as `pub(crate)` and import. Never duplicate constants across modules even if the values are the same today.
+
+- **Use param structs for Db trait methods with 4+ parameters.** The initial design had `search_fts` and `search_vector` with 6 bare parameters each (actor_id, query, namespace, namespace_prefix, strategy, limit). Four reviewers flagged this as inconsistent with the existing `ListMemoriesParams`/`GetEventsParams` pattern and error-prone at call sites. Introducing `SearchFtsParams` and `SearchVectorParams` structs made the trait extensible and consistent. Apply this from the start for any method with optional filter parameters.
+
+- **FTS5 injection prevention is the search module's responsibility, not the Db layer's.** The Db trait's `search_fts` accepts a pre-sanitized query string. The sanitization (strip operators, quote tokens, cap count) lives in `search.rs`. This keeps the Db layer simple but creates a trust boundary — any direct caller of `search_fts` must sanitize first. A `SanitizedFtsQuery` newtype would make this compile-time safe (logged to backlog).
+
+- **sqlite-vec KNN applies post-filters, not pre-filters.** The `vec0` virtual table's `embedding MATCH ? AND k = ?` returns the top-K nearest neighbors globally, *before* any WHERE clauses on joined tables. Post-filters (actor_id, namespace, is_valid) reduce the result set below K. The mitigation is over-fetching with a capped multiplier, but this means multi-actor stores may return fewer results than requested. Document this limitation clearly.
+
+- **Validate floating-point inputs for NaN/infinity.** Embedding vectors are `&[f32]` — they can contain NaN or infinity values that produce garbage results in distance calculations and break sort ordering. The security reviewer flagged this as "do now" priority. Always validate `is_finite()` on float inputs before passing to SQLite or sqlite-vec.
+
+- **Hybrid search score semantics are inherently inconsistent.** FTS returns negated BM25 (unbounded), vector returns `1/(1+distance)` (0–1), and RRF returns rank-based scores (~0–0.033). There's no way to normalize these without losing information. Document the incomparability explicitly in the API and consider adding a `search_mode` field so callers know which scale they're looking at.
+
+- **Wire new modules in `lib.rs` and `main.rs` immediately.** The binary crate (`main.rs`) has its own `mod` declarations separate from `lib.rs`. Forgetting to add `mod search;` to `main.rs` caused a compile error that wasn't caught by `cargo check` on the library crate alone. Always add to both files in the same step.

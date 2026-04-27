@@ -17,22 +17,21 @@
 
 - [x] Component 3: Memory tools — design (2 review rounds, 6 High resolved), code (23 tests), code review (1 High fixed), merged
 
+- [x] Component 4: Search (FTS5 + vector) — design (2 review rounds, 6 High resolved), code (22 tests), code review (1 High fixed + 1 Medium NaN validation), merged
+
 ## In Progress
 
 _(none)_
 
 ## Planned — Implementation (per-component, each goes through full workflow)
 
-- [ ] Component 1: Core DB layer — design, review, code, review
-- [ ] Component 2: Event tools — design, review, code, review
-- [ ] Component 3: Memory tools — design, review, code, review
-- [x] Component 4: Search (FTS5 + vector) — design (2 review rounds, 6 High resolved), code (22 tests), code review (1 High fixed), merged
-- [ ] Component 5: Session tools (checkpoints, branches) — design, review, code, review
-- [ ] Component 6: Store management tools — design, review, code, review
-- [ ] Component 7: Namespace tools — design, review, code, review
-- [ ] Component 8: MCP server — design, review, code, review
-- [ ] Component 9: CI/CD — design, review, code, review
-- [ ] Component 10: Installers — design, review, code, review
+- [ ] Component 5: Knowledge graph — design, review, code, review
+- [ ] Component 6: Session tools (checkpoints, branches) — design, review, code, review
+- [ ] Component 7: Store management tools — design, review, code, review
+- [ ] Component 8: Namespace tools — design, review, code, review
+- [ ] Component 9: MCP server — design, review, code, review
+- [ ] Component 10: CI/CD — design, review, code, review
+- [ ] Component 11: Installers — design, review, code, review
 
 ## Backlog
 
