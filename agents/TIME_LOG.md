@@ -26,4 +26,8 @@
 | 2026-04-26 | Component 3 | 10 min | Design re-review (round 2): 2 new High (delete ordering, vec0 transaction risk). Both resolved. 0 Critical/0 High remaining — design approved. |
 | 2026-04-26 | Component 3 | 25 min | Coding: memories.rs (types, validation, business logic), Db trait methods + impls in db.rs, escape_like helper, 23 new tests, 59 total passing |
 | 2026-04-26 | Component 3 | 15 min | Code review: 5 personas, 1 High (consolidate UPDATE missing actor_id+is_valid). Fixed. Medium items logged to backlog. |
-| | | **~435 min** | **Total** |
+| 2026-04-26 | Component 4 | 20 min | Wrote detailed design for search.md (FTS5 + vector search, RRF hybrid, Db trait methods, DAG, sub-agent instructions) |
+| 2026-04-26 | Component 4 | 20 min | Design review round 1: 5 personas, resolved 5 High findings (over-fetch cap, param structs, token cap, query length, silent fallback). Logged 16 Medium/Low to backlog. |
+| 2026-04-26 | Component 4 | 15 min | Design re-review (round 2): 5 personas, resolved 1 High (debug_assert→runtime check for embedding dim), 2 Medium (hybrid fetch_limit cap, score doc). 0 Critical/0 High remaining — design approved. |
+| 2026-04-26 | Component 4 | 25 min | Coding: search.rs (types, constants, sanitize_fts_query, RRF, recall, validation), Db trait methods + impls in db.rs, 22 new tests, 81 total passing |
+| | | **~515 min** | **Total** |

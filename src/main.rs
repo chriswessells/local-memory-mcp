@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod events;
 mod memories;
+mod search;
 mod store;
 
 fn main() {

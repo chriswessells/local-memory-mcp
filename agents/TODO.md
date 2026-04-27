@@ -26,7 +26,7 @@ _(none)_
 - [ ] Component 1: Core DB layer — design, review, code, review
 - [ ] Component 2: Event tools — design, review, code, review
 - [ ] Component 3: Memory tools — design, review, code, review
-- [ ] Component 4: Search (FTS5 + vector) — design, review, code, review
+- [x] Component 4: Search (FTS5 + vector) — design (2 review rounds, 6 High resolved), code (22 tests), code review pending
 - [ ] Component 5: Session tools (checkpoints, branches) — design, review, code, review
 - [ ] Component 6: Store management tools — design, review, code, review
 - [ ] Component 7: Namespace tools — design, review, code, review
@@ -118,6 +118,35 @@ _(none)_
 - [ ] Add `validate_max_len` for `actor_id` in get/consolidate/delete (consistency with store)
 - [ ] Document `unchecked_transaction` invariant: safe under EXCLUSIVE locking mode
 - [ ] Add comment on consolidate_memory: metadata/source_session_id intentionally not inherited
+
+### From Component 4 design review (Medium/Low)
+- [ ] CJK text handling: FTS5 sanitizer splits on whitespace only, CJK has no word boundaries — document limitation or add character-class splitting
+- [ ] Score semantics vary by search mode — consider adding `search_mode` field to SearchResult or normalizing scores to 0.0–1.0
+- [ ] Distance-to-similarity formula `1/(1+d)` is not cosine similarity — document clearly or use `1 - L2²/2` for normalized embeddings
+- [ ] FTS5 sanitizer: split on hyphens too (not just whitespace) so "long-term" matches FTS5 unicode61 tokenization
+- [ ] Extract `QueryBuilder` helper for dynamic SQL with optional WHERE clauses (used in get_events, list_memories, search_fts, search_vector)
+- [ ] Extract `MemoryFilter` struct to share filter fields across list_memories, search_fts, search_vector
+- [ ] Add embedding dimension `debug_assert_eq!` in search_vector Connection impl for defense-in-depth
+- [ ] Verify query plans with `EXPLAIN QUERY PLAN` for FTS5 join and vector CTE during implementation
+- [ ] Add `namespace_prefix_like(prefix: &str) -> String` helper to avoid duplicating escape_like + `%` append
+- [ ] RRF HashMap clones full Memory structs — consider using indices for large result sets
+- [ ] FTS5 content-sync crash recovery: add `memory.rebuild_index` tool (already in backlog)
+- [ ] sqlite-vec KNN blob binding: add cross-platform integration test (especially Windows CI)
+- [ ] Add `progress_handler` on SQLite connection for query timeout (server-wide concern)
+- [ ] Disk-full during FTS5 query: map SQLITE_FULL to specific error variant
+- [ ] WAL checkpoint failure in switch(): use best-effort close to avoid trapping user on full disk
+- [ ] Document that changing embedding dimensions requires schema v2 migration + re-embedding
+
+### From Component 4 design review round 2 (Medium/Low)
+- [ ] Introduce `SanitizedFtsQuery` newtype to prevent unsanitized FTS queries at Db trait boundary
+- [ ] Add `test_search_vector_namespace_filter` and `test_search_vector_valid_only` for filter parity with FTS tests
+- [ ] RRF: use `or_insert_with` instead of `or_insert` to avoid eager Memory clone
+- [ ] Add comment on `sanitize_fts_query`: hyphen stripping is intentional, aligned with FTS5 unicode61 tokenizer
+- [ ] `search_vector` Db trait doc comment: clarify returns raw L2 distance, callers must convert to similarity
+- [ ] Use structured tracing fields in hybrid fallback warn log (actor_id, query_len, vec_results count)
+- [ ] Document VECTOR_OVERFETCH_FACTOR / MAX_K_OVERFETCH interaction formula in constant doc comments
+- [ ] Add `dist.max(0.0)` guard in vector-only score conversion for defensive coding
+- [ ] Add RRF test case for completely disjoint lists (no overlap)
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)

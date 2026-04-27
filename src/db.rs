@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 use crate::error::MemoryError;
 use crate::events::{BranchFilter, Event, GetEventsParams, InsertEventParams, SessionInfo};
 use crate::memories::{ConsolidateAction, InsertMemoryParams, ListMemoriesParams, Memory};
+use crate::search::{SearchFtsParams, SearchVectorParams};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const EMBEDDING_DIM: u32 = 384;
@@ -302,8 +303,16 @@ pub trait Db {
     fn delete_memory(&self, actor_id: &str, memory_id: &str) -> Result<(), MemoryError>;
 
     // -- Search (Component 4) --
-    // fn search_fts(actor_id: &str, query: &str, limit: u32) -> Result<Vec<Memory>, MemoryError>;
-    // fn search_vector(actor_id: &str, embedding: &[f32], limit: u32) -> Result<Vec<Memory>, MemoryError>;
+
+    /// Full-text search over memory content via FTS5.
+    /// `params.fts_query` must be pre-sanitized by the caller (search.rs).
+    /// Returns memories ordered by BM25 relevance (negated rank, higher = better).
+    fn search_fts(&self, params: &SearchFtsParams<'_>) -> Result<Vec<(Memory, f64)>, MemoryError>;
+
+    /// Vector similarity search over memory embeddings via sqlite-vec.
+    /// Returns memories ordered by L2 distance (ascending, lower = closer).
+    /// Callers must convert distance to similarity if needed.
+    fn search_vector(&self, params: &SearchVectorParams<'_>) -> Result<Vec<(Memory, f64)>, MemoryError>;
 
     // -- Graph (Component 5) --
     // fn insert_edge(...) -> Result<String, MemoryError>;
@@ -830,6 +839,143 @@ impl Db for Connection {
         })?;
 
         Ok(())
+    }
+
+    // -- Search (Component 4) --
+
+    fn search_fts(&self, params: &SearchFtsParams<'_>) -> Result<Vec<(Memory, f64)>, MemoryError> {
+        let mut sql = String::from(
+            "SELECT m.id, m.actor_id, m.namespace, m.strategy, m.content, m.metadata,
+                    m.source_session_id, m.is_valid, m.superseded_by, m.created_at, m.updated_at,
+                    -rank AS score
+             FROM memory_fts
+             JOIN memories m ON memory_fts.rowid = m.memory_rowid
+             WHERE memory_fts MATCH ?1
+               AND m.actor_id = ?2
+               AND m.is_valid = 1",
+        );
+        let mut bind: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(params.fts_query.to_string()),
+            Box::new(params.actor_id.to_string()),
+        ];
+
+        if let Some(ns) = params.namespace {
+            bind.push(Box::new(ns.to_string()));
+            sql.push_str(&format!(" AND m.namespace = ?{}", bind.len()));
+        }
+        if let Some(prefix) = params.namespace_prefix {
+            bind.push(Box::new(format!("{}%", escape_like(prefix))));
+            sql.push_str(&format!(" AND m.namespace LIKE ?{} ESCAPE '\\'", bind.len()));
+        }
+        if let Some(s) = params.strategy {
+            bind.push(Box::new(s.to_string()));
+            sql.push_str(&format!(" AND m.strategy = ?{}", bind.len()));
+        }
+
+        bind.push(Box::new(params.limit));
+        sql.push_str(&format!(" ORDER BY rank LIMIT ?{}", bind.len()));
+
+        let mut stmt = self.prepare(&sql).map_err(|e| {
+            tracing::error!("search_fts prepare failed: {e}");
+            MemoryError::QueryFailed("failed to prepare FTS search query".into())
+        })?;
+
+        let refs: Vec<&dyn rusqlite::types::ToSql> = bind.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                Ok((row_to_memory(row)?, row.get::<_, f64>(11)?))
+            })
+            .map_err(|e| {
+                tracing::error!("search_fts query failed: {e}");
+                MemoryError::QueryFailed("failed to execute FTS search".into())
+            })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| {
+                tracing::error!("search_fts row read failed: {e}");
+                MemoryError::QueryFailed("failed to read FTS search result".into())
+            })?);
+        }
+        Ok(results)
+    }
+
+    fn search_vector(&self, params: &SearchVectorParams<'_>) -> Result<Vec<(Memory, f64)>, MemoryError> {
+        const OVERFETCH_FACTOR: u32 = 4;
+        const MAX_K: u32 = 1000;
+
+        if params.embedding.len() != EMBEDDING_DIM as usize {
+            return Err(MemoryError::InvalidInput(format!(
+                "embedding must have exactly {EMBEDDING_DIM} dimensions"
+            )));
+        }
+
+        let query_bytes: Vec<u8> = params
+            .embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        let k_overfetch = (params.limit * OVERFETCH_FACTOR).min(MAX_K);
+
+        let mut sql = String::from(
+            "WITH knn AS (
+                 SELECT memory_id, distance
+                 FROM memory_vec
+                 WHERE embedding MATCH ?1 AND k = ?2
+             )
+             SELECT m.id, m.actor_id, m.namespace, m.strategy, m.content, m.metadata,
+                    m.source_session_id, m.is_valid, m.superseded_by, m.created_at, m.updated_at,
+                    knn.distance
+             FROM knn
+             JOIN memories m ON knn.memory_id = m.id
+             WHERE m.actor_id = ?3
+               AND m.is_valid = 1",
+        );
+        let mut bind: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(query_bytes),
+            Box::new(k_overfetch),
+            Box::new(params.actor_id.to_string()),
+        ];
+
+        if let Some(ns) = params.namespace {
+            bind.push(Box::new(ns.to_string()));
+            sql.push_str(&format!(" AND m.namespace = ?{}", bind.len()));
+        }
+        if let Some(prefix) = params.namespace_prefix {
+            bind.push(Box::new(format!("{}%", escape_like(prefix))));
+            sql.push_str(&format!(" AND m.namespace LIKE ?{} ESCAPE '\\'", bind.len()));
+        }
+        if let Some(s) = params.strategy {
+            bind.push(Box::new(s.to_string()));
+            sql.push_str(&format!(" AND m.strategy = ?{}", bind.len()));
+        }
+
+        bind.push(Box::new(params.limit));
+        sql.push_str(&format!(" ORDER BY knn.distance ASC LIMIT ?{}", bind.len()));
+
+        let mut stmt = self.prepare(&sql).map_err(|e| {
+            tracing::error!("search_vector prepare failed: {e}");
+            MemoryError::QueryFailed("failed to prepare vector search query".into())
+        })?;
+
+        let refs: Vec<&dyn rusqlite::types::ToSql> = bind.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                Ok((row_to_memory(row)?, row.get::<_, f64>(11)?))
+            })
+            .map_err(|e| {
+                tracing::error!("search_vector query failed: {e}");
+                MemoryError::QueryFailed("failed to execute vector search".into())
+            })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| {
+                tracing::error!("search_vector row read failed: {e}");
+                MemoryError::QueryFailed("failed to read vector search result".into())
+            })?);
+        }
+        Ok(results)
     }
 }
 
@@ -1470,5 +1616,200 @@ mod tests {
         let m = conn.insert_memory(&mem_params("actor1", "content", "semantic")).unwrap();
         let result = conn.delete_memory("actor2", &m.id);
         assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    // -- Search tests (Component 4) --
+
+    use crate::search::{SearchFtsParams, SearchVectorParams};
+
+    #[test]
+    fn test_search_fts_basic() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&mem_params("a1", "Rust programming language", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "Python scripting", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a1", "Go concurrency", "semantic")).unwrap();
+
+        let results = conn.search_fts(&SearchFtsParams {
+            actor_id: "a1",
+            fts_query: "\"Rust\"",
+            namespace: None,
+            namespace_prefix: None,
+            strategy: None,
+            limit: 10,
+        }).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].0.content.contains("Rust"));
+        assert!(results[0].1 > 0.0);
+    }
+
+    #[test]
+    fn test_search_fts_actor_scoping() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&mem_params("a1", "Rust programming", "semantic")).unwrap();
+        conn.insert_memory(&mem_params("a2", "Rust scripting", "semantic")).unwrap();
+
+        let results = conn.search_fts(&SearchFtsParams {
+            actor_id: "a1",
+            fts_query: "\"Rust\"",
+            namespace: None,
+            namespace_prefix: None,
+            strategy: None,
+            limit: 10,
+        }).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.actor_id, "a1");
+    }
+
+    #[test]
+    fn test_search_fts_valid_only() {
+        let (_dir, conn) = open_temp();
+        let m = conn.insert_memory(&mem_params("a1", "Rust programming", "semantic")).unwrap();
+        conn.consolidate_memory("a1", &m.id, &ConsolidateAction::Invalidate).unwrap();
+
+        let results = conn.search_fts(&SearchFtsParams {
+            actor_id: "a1",
+            fts_query: "\"Rust\"",
+            namespace: None,
+            namespace_prefix: None,
+            strategy: None,
+            limit: 10,
+        }).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_fts_namespace_filter() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/lang"),
+            ..mem_params("a1", "Rust programming", "semantic")
+        }).unwrap();
+        conn.insert_memory(&InsertMemoryParams {
+            namespace: Some("/other"),
+            ..mem_params("a1", "Rust scripting", "semantic")
+        }).unwrap();
+
+        let results = conn.search_fts(&SearchFtsParams {
+            actor_id: "a1",
+            fts_query: "\"Rust\"",
+            namespace: Some("/lang"),
+            namespace_prefix: None,
+            strategy: None,
+            limit: 10,
+        }).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.namespace, "/lang");
+    }
+
+    #[test]
+    fn test_search_fts_no_match() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&mem_params("a1", "Python scripting", "semantic")).unwrap();
+
+        let results = conn.search_fts(&SearchFtsParams {
+            actor_id: "a1",
+            fts_query: "\"Rust\"",
+            namespace: None,
+            namespace_prefix: None,
+            strategy: None,
+            limit: 10,
+        }).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_vector_basic() {
+        let (_dir, conn) = open_temp();
+        let mut emb1 = vec![0.0f32; 384];
+        emb1[0] = 1.0;
+        let mut emb2 = vec![0.0f32; 384];
+        emb2[1] = 1.0;
+
+        conn.insert_memory(&InsertMemoryParams {
+            embedding: Some(&emb1),
+            ..mem_params("a1", "memory one", "semantic")
+        }).unwrap();
+        conn.insert_memory(&InsertMemoryParams {
+            embedding: Some(&emb2),
+            ..mem_params("a1", "memory two", "semantic")
+        }).unwrap();
+
+        let results = conn.search_vector(&SearchVectorParams {
+            actor_id: "a1",
+            embedding: &emb1,
+            namespace: None,
+            namespace_prefix: None,
+            strategy: None,
+            limit: 10,
+        }).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0.content, "memory one");
+        assert!(results[0].1 < results[1].1);
+    }
+
+    #[test]
+    fn test_search_vector_actor_scoping() {
+        let (_dir, conn) = open_temp();
+        let emb = vec![0.1f32; 384];
+        conn.insert_memory(&InsertMemoryParams {
+            embedding: Some(&emb),
+            ..mem_params("a1", "actor1 memory", "semantic")
+        }).unwrap();
+        conn.insert_memory(&InsertMemoryParams {
+            embedding: Some(&emb),
+            ..mem_params("a2", "actor2 memory", "semantic")
+        }).unwrap();
+
+        let results = conn.search_vector(&SearchVectorParams {
+            actor_id: "a1",
+            embedding: &emb,
+            namespace: None,
+            namespace_prefix: None,
+            strategy: None,
+            limit: 10,
+        }).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.actor_id, "a1");
+    }
+
+    #[test]
+    fn test_search_vector_no_embeddings() {
+        let (_dir, conn) = open_temp();
+        conn.insert_memory(&mem_params("a1", "no embedding", "semantic")).unwrap();
+        let emb = vec![0.1f32; 384];
+
+        let results = conn.search_vector(&SearchVectorParams {
+            actor_id: "a1",
+            embedding: &emb,
+            namespace: None,
+            namespace_prefix: None,
+            strategy: None,
+            limit: 10,
+        }).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_vector_knn_roundtrip() {
+        let (_dir, conn) = open_temp();
+        let mut emb = vec![0.0f32; 384];
+        emb[0] = 1.0;
+
+        let m = conn.insert_memory(&InsertMemoryParams {
+            embedding: Some(&emb),
+            ..mem_params("a1", "roundtrip memory", "semantic")
+        }).unwrap();
+
+        let results = conn.search_vector(&SearchVectorParams {
+            actor_id: "a1",
+            embedding: &emb,
+            namespace: None,
+            namespace_prefix: None,
+            strategy: None,
+            limit: 1,
+        }).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.id, m.id);
+        assert!(results[0].1 < 1e-5);
     }
 }
