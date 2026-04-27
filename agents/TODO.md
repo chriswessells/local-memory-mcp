@@ -25,7 +25,22 @@
 
 ## In Progress
 
-_(none)_
+- [ ] Component 12: Integration & E2E tests — design (2 review rounds, 2 Critical + 11 High resolved), artifact review complete
+  - [x] Task 1: Shared helpers + Cargo.toml update (`tests/common/mod.rs`, tokio dev-dep)
+  - [x] Task 2: Integration tests — 8 test cases in `tests/integration.rs`
+    - [x] test_event_lifecycle
+    - [x] test_memory_lifecycle
+    - [x] test_recall_fts
+    - [x] test_graph_lifecycle
+    - [x] test_store_isolation
+    - [x] test_actor_isolation
+    - [x] test_blob_event_roundtrip
+    - [x] test_error_responses
+  - [x] Task 3: E2E tests — 2 test cases in `tests/e2e.rs`
+    - [x] test_e2e_mcp_lifecycle
+    - [x] test_e2e_stderr_logging
+  - [x] Task 4: Final verification (cargo test + cargo clippy)
+  - [ ] Additional tests for Components 6, 7, 8 (when implemented)
 
 ## Planned — Implementation (per-component, each goes through full workflow)
 
@@ -33,7 +48,7 @@ _(none)_
 - [ ] Component 7: Store management tools — design, review, code, review
 - [ ] Component 8: Namespace tools — design, review, code, review
 - [ ] Component 9: MCP server — ✅ done (moved to Completed)
-- [ ] Component 10: CI/CD — design, review, code, review
+- [x] Component 10: CI/CD — design (2 Critical + 6 High resolved in design review), code (ci.yml + release.yml), code review (3 High fixed: release atomicity, artifact verification, per-job permissions), merged
 - [ ] Component 11: Installers — design, review, code, review
 
 ## Backlog
@@ -197,6 +212,26 @@ _(none)_
 - [ ] CASCADE delete: include edges_removed count in memory.delete response
 - [ ] Add `updated_at` column to knowledge_edges schema to avoid future migration
 - [ ] Parse traverse path JSON with serde_json::from_str and map errors to QueryFailed
+
+### From Component 10 design review (Medium/Low)
+- [ ] Add `cargo audit` step to CI or as a separate scheduled workflow
+- [ ] Add SLSA provenance attestation (`actions/attest-build-provenance`) when project gains users
+- [ ] Add tag-version vs Cargo.toml consistency check in release workflow
+- [ ] Add `key: ci` to CI workflow's rust-cache to namespace away from release caches
+- [ ] Document that Linux aarch64 release binary is cross-compiled but not tested in CI
+- [ ] Add CI timeout note for E2E tests if flakiness appears (split into separate step)
+- [ ] Add branch protection on `main` requiring CI status check
+- [ ] Pin `cross` Docker images for fully reproducible aarch64-linux builds
+
+### From Component 10 code review (Medium/Low)
+- [ ] Add `--locked` to `cargo clippy` and `cargo test` in ci.yml for consistency with release
+- [ ] Split E2E tests into separate CI step for better diagnostic visibility
+- [ ] Add `Swatinem/rust-cache` to release workflow with `key: release-${{ matrix.target }}`
+- [ ] Update `actions/checkout` SHA to v4.3.1 for credential cleanup fix
+- [ ] Pin `dtolnay/rust-toolchain` to SHA instead of branch name
+- [ ] Verify `cross` 0.2.5 compatibility with current `ubuntu-latest` runner
+- [ ] Add step names to ci.yml cargo run steps for Actions UI readability
+- [ ] Add top-of-file comments linking to design/ci-cd.md rationale
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)

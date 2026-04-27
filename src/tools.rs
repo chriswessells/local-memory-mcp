@@ -66,14 +66,14 @@ impl MemoryServer {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-enum EventType {
+pub enum EventType {
     Conversation,
     Blob,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-enum Role {
+pub enum Role {
     User,
     Assistant,
     Tool,
@@ -82,7 +82,7 @@ enum Role {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-enum ConsolidateActionType {
+pub enum ConsolidateActionType {
     Update,
     Invalidate,
 }
@@ -94,7 +94,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct AddEventParams {
+pub struct AddEventParams {
     actor_id: String,
     session_id: String,
     event_type: EventType,
@@ -114,13 +114,13 @@ struct AddEventParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct GetEventParams {
+pub struct GetEventParams {
     actor_id: String,
     event_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct GetEventsToolParams {
+pub struct GetEventsToolParams {
     actor_id: String,
     session_id: String,
     /// "all" (default), "main" (main timeline only), or a specific branch ID
@@ -137,7 +137,7 @@ struct GetEventsToolParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct ListSessionsParams {
+pub struct ListSessionsParams {
     actor_id: String,
     #[serde(default)]
     limit: Option<u32>,
@@ -146,7 +146,7 @@ struct ListSessionsParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct StoreMemoryParams {
+pub struct StoreMemoryParams {
     actor_id: String,
     content: String,
     strategy: String,
@@ -163,13 +163,13 @@ struct StoreMemoryParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct GetMemoryParams {
+pub struct GetMemoryParams {
     actor_id: String,
     memory_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct ListMemoriesToolParams {
+pub struct ListMemoriesToolParams {
     actor_id: String,
     #[serde(default)]
     namespace: Option<String>,
@@ -186,7 +186,7 @@ struct ListMemoriesToolParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct ConsolidateParams {
+pub struct ConsolidateParams {
     actor_id: String,
     memory_id: String,
     action: ConsolidateActionType,
@@ -200,13 +200,13 @@ struct ConsolidateParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct DeleteMemoryParams {
+pub struct DeleteMemoryParams {
     actor_id: String,
     memory_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct RecallToolParams {
+pub struct RecallToolParams {
     actor_id: String,
     #[serde(default)]
     query: Option<String>,
@@ -225,19 +225,19 @@ struct RecallToolParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct SwitchStoreParams {
+pub struct SwitchStoreParams {
     name: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct DeleteStoreParams {
+pub struct DeleteStoreParams {
     name: String,
 }
 
 // -- Graph param structs --
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct AddEdgeParams {
+pub struct AddEdgeParams {
     actor_id: String,
     from_memory_id: String,
     to_memory_id: String,
@@ -247,7 +247,7 @@ struct AddEdgeParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct GetNeighborsParams {
+pub struct GetNeighborsParams {
     actor_id: String,
     memory_id: String,
     /// Direction: "out" (default), "in", or "both"
@@ -260,7 +260,7 @@ struct GetNeighborsParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct TraverseParams {
+pub struct TraverseParams {
     actor_id: String,
     start_memory_id: String,
     /// Max traversal depth (default 2, max 5)
@@ -274,7 +274,7 @@ struct TraverseParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct UpdateEdgeToolParams {
+pub struct UpdateEdgeToolParams {
     actor_id: String,
     edge_id: String,
     #[serde(default)]
@@ -285,18 +285,18 @@ struct UpdateEdgeToolParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct DeleteEdgeParams {
+pub struct DeleteEdgeParams {
     actor_id: String,
     edge_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct ListLabelsParams {
+pub struct ListLabelsParams {
     actor_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct GraphStatsParams {
+pub struct GraphStatsParams {
     actor_id: String,
 }
 
@@ -351,7 +351,7 @@ impl MemoryServer {
         name = "memory.add_event",
         description = "Store an immutable conversation or blob event in a session timeline. Event type must be 'conversation' (requires content) or 'blob' (requires base64-encoded blob_data). Returns the full event object with generated id and created_at timestamp."
     )]
-    async fn add_event(
+    pub async fn add_event(
         &self,
         Parameters(params): Parameters<AddEventParams>,
     ) -> Result<String, String> {
@@ -394,7 +394,7 @@ impl MemoryServer {
         name = "memory.get_event",
         description = "Retrieve a single event by its ID, scoped to the given actor. Returns the full event object or a not_found error if the event does not exist for this actor."
     )]
-    async fn get_event(
+    pub async fn get_event(
         &self,
         Parameters(params): Parameters<GetEventParams>,
     ) -> Result<String, String> {
@@ -410,7 +410,7 @@ impl MemoryServer {
         name = "memory.get_events",
         description = "Retrieve events for an actor+session with optional branch, time range, and pagination filters. Events are returned in chronological order (oldest first). Use branch_filter 'all' (default), 'main', or a specific branch ID."
     )]
-    async fn get_events(
+    pub async fn get_events(
         &self,
         Parameters(params): Parameters<GetEventsToolParams>,
     ) -> Result<String, String> {
@@ -436,7 +436,7 @@ impl MemoryServer {
         name = "memory.list_sessions",
         description = "List distinct sessions for an actor with event counts and date ranges. Results are ordered by last event time descending. Supports limit/offset pagination."
     )]
-    async fn list_sessions(
+    pub async fn list_sessions(
         &self,
         Parameters(params): Parameters<ListSessionsParams>,
     ) -> Result<String, String> {
@@ -456,7 +456,7 @@ impl MemoryServer {
         name = "memory.delete_expired",
         description = "Delete all events whose expires_at timestamp is in the past. Returns a JSON object with the count of deleted events. This is a maintenance operation with no required parameters."
     )]
-    async fn delete_expired(&self) -> Result<String, String> {
+    pub async fn delete_expired(&self) -> Result<String, String> {
         self.run(|mgr| {
             let db = mgr.db()?;
             let count = events::delete_expired(db)?;
@@ -469,7 +469,7 @@ impl MemoryServer {
         name = "memory.store",
         description = "Store an extracted insight as a long-term memory. Requires actor_id, content, and strategy. Optionally provide a 384-dim embedding vector for vector search. Returns the full memory object with generated id."
     )]
-    async fn store_memory(
+    pub async fn store_memory(
         &self,
         Parameters(params): Parameters<StoreMemoryParams>,
     ) -> Result<String, String> {
@@ -493,7 +493,7 @@ impl MemoryServer {
         name = "memory.get",
         description = "Retrieve a single memory by its ID, scoped to the given actor. Returns the full memory object or a not_found error."
     )]
-    async fn get_memory(
+    pub async fn get_memory(
         &self,
         Parameters(params): Parameters<GetMemoryParams>,
     ) -> Result<String, String> {
@@ -508,7 +508,7 @@ impl MemoryServer {
         name = "memory.list",
         description = "List memories for an actor with optional namespace, namespace_prefix, strategy, and validity filters. Results are ordered by created_at descending. Supports limit/offset pagination. By default only valid memories are returned."
     )]
-    async fn list_memories(
+    pub async fn list_memories(
         &self,
         Parameters(params): Parameters<ListMemoriesToolParams>,
     ) -> Result<String, String> {
@@ -532,7 +532,7 @@ impl MemoryServer {
         name = "memory.consolidate",
         description = "Update or invalidate an existing memory. Action 'update' requires new_content and creates a replacement memory, marking the old one invalid. Action 'invalidate' marks the memory invalid with no replacement. Returns the resulting memory object."
     )]
-    async fn consolidate(
+    pub async fn consolidate(
         &self,
         Parameters(params): Parameters<ConsolidateParams>,
     ) -> Result<String, String> {
@@ -552,7 +552,7 @@ impl MemoryServer {
         name = "memory.delete",
         description = "Permanently delete a memory and its embedding, scoped to the given actor. Returns {\"deleted\": true} on success or a not_found error if the memory does not exist."
     )]
-    async fn delete_memory(
+    pub async fn delete_memory(
         &self,
         Parameters(params): Parameters<DeleteMemoryParams>,
     ) -> Result<String, String> {
@@ -568,7 +568,7 @@ impl MemoryServer {
         name = "memory.recall",
         description = "Search memories by text query, embedding vector, or both (hybrid RRF fusion). At least one of query or embedding must be provided. Returns a list of matching memories with relevance scores. Scores are not comparable across different search modes."
     )]
-    async fn recall(
+    pub async fn recall(
         &self,
         Parameters(params): Parameters<RecallToolParams>,
     ) -> Result<String, String> {
@@ -592,7 +592,7 @@ impl MemoryServer {
         name = "memory.switch_store",
         description = "Switch to a different named store, creating it if it does not exist. The previous store is checkpointed and closed. Store names must be 1-64 alphanumeric characters (plus hyphens/underscores)."
     )]
-    async fn switch_store(
+    pub async fn switch_store(
         &self,
         Parameters(params): Parameters<SwitchStoreParams>,
     ) -> Result<String, String> {
@@ -607,7 +607,7 @@ impl MemoryServer {
         name = "memory.current_store",
         description = "Return the name of the currently active store. Returns a JSON object with the store name, or null if no store is open."
     )]
-    async fn current_store(&self) -> Result<String, String> {
+    pub async fn current_store(&self) -> Result<String, String> {
         self.run(|mgr| {
             let name = mgr.active_name().map(|s| s.to_string());
             Ok(serde_json::json!({ "store": name }))
@@ -619,7 +619,7 @@ impl MemoryServer {
         name = "memory.list_stores",
         description = "List all stores in the base directory with their names and sizes in bytes. Returns an array of store info objects sorted alphabetically by name."
     )]
-    async fn list_stores(&self) -> Result<String, String> {
+    pub async fn list_stores(&self) -> Result<String, String> {
         self.run(|mgr| {
             let stores = mgr.list()?;
             let out: Vec<serde_json::Value> = stores
@@ -635,7 +635,7 @@ impl MemoryServer {
         name = "memory.delete_store",
         description = "Delete a named store and its auxiliary files. Cannot delete the currently active store. Returns {\"deleted\": true} on success or an error if the store is active or not found."
     )]
-    async fn delete_store(
+    pub async fn delete_store(
         &self,
         Parameters(params): Parameters<DeleteStoreParams>,
     ) -> Result<String, String> {
@@ -652,7 +652,7 @@ impl MemoryServer {
         name = "graph.add_edge",
         description = "Create a directed edge between two memories. Both memories must belong to the same actor. Self-edges are not allowed. Returns the full edge object."
     )]
-    async fn add_edge(
+    pub async fn add_edge(
         &self,
         Parameters(params): Parameters<AddEdgeParams>,
     ) -> Result<String, String> {
@@ -674,7 +674,7 @@ impl MemoryServer {
         name = "graph.get_neighbors",
         description = "Get neighbors of a memory via its edges. Returns edges and connected memories. Direction: 'out' (default), 'in', or 'both'."
     )]
-    async fn get_neighbors(
+    pub async fn get_neighbors(
         &self,
         Parameters(params): Parameters<GetNeighborsParams>,
     ) -> Result<String, String> {
@@ -696,7 +696,7 @@ impl MemoryServer {
         name = "graph.traverse",
         description = "BFS traversal from a start memory through edges. Returns visited memories with depth and path. Direction: 'out' (default), 'in', or 'both'. Max depth 5."
     )]
-    async fn traverse(
+    pub async fn traverse(
         &self,
         Parameters(params): Parameters<TraverseParams>,
     ) -> Result<String, String> {
@@ -718,7 +718,7 @@ impl MemoryServer {
         name = "graph.update_edge",
         description = "Update an edge's label and/or properties. At least one must be provided. Returns the updated edge object."
     )]
-    async fn update_edge(
+    pub async fn update_edge(
         &self,
         Parameters(params): Parameters<UpdateEdgeToolParams>,
     ) -> Result<String, String> {
@@ -739,7 +739,7 @@ impl MemoryServer {
         name = "graph.delete_edge",
         description = "Delete an edge by ID, scoped to the given actor. Returns {\"deleted\": true} on success."
     )]
-    async fn delete_edge(
+    pub async fn delete_edge(
         &self,
         Parameters(params): Parameters<DeleteEdgeParams>,
     ) -> Result<String, String> {
@@ -755,7 +755,7 @@ impl MemoryServer {
         name = "graph.list_labels",
         description = "List all distinct edge labels with their counts for the given actor, ordered by count descending."
     )]
-    async fn list_labels(
+    pub async fn list_labels(
         &self,
         Parameters(params): Parameters<ListLabelsParams>,
     ) -> Result<String, String> {
@@ -770,7 +770,7 @@ impl MemoryServer {
         name = "graph.stats",
         description = "Get graph statistics for the given actor: total edge count, label distribution, and top 10 most connected memories."
     )]
-    async fn graph_stats(
+    pub async fn graph_stats(
         &self,
         Parameters(params): Parameters<GraphStatsParams>,
     ) -> Result<String, String> {

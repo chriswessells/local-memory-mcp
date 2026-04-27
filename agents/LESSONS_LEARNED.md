@@ -97,3 +97,22 @@ Capture what went wrong, what surprised us, and what we'd do differently.
 - **Static SQL variants beat dynamic SQL for complex queries.** The recursive CTE for graph traversal has 3 direction variants. The initial design said "build SQL dynamically based on direction." The maintainability reviewer flagged this as High risk — string concatenation for recursive CTEs is error-prone and hard to debug. Pre-defining 3 static SQL constants (one per direction) and selecting via `match` is more code but far more reliable and testable.
 
 - **Use serde enums for fixed-value MCP parameters consistently.** The `Direction` enum initially used a raw string with a `parse_direction` helper, while `EventType` and `Role` in the same codebase used typed serde enums. The interoperability reviewer caught the inconsistency. Lesson: when a pattern exists (typed serde enums for MCP params), follow it everywhere. Don't introduce a second pattern for the same problem.
+
+---
+
+## Component 12: Integration & E2E Tests
+
+- **rmcp `#[tool]` macro generates private methods by default.** The first implementation bypassed the tool layer entirely, calling domain functions directly. Code review (5 personas) caught this as Critical — the tests were duplicating unit test coverage instead of testing the integration boundary. Fix: add `pub` to tool methods and param structs, which rmcp supports.
+- **`#[serde(flatten)]` changes JSON structure.** `SearchResult` flattens `Memory` fields to the top level. Tests that assumed `result["memory"]["content"]` failed — the correct path is `result["content"]`. This is exactly the kind of serde bug that integration tests through the tool layer catch.
+- **`Option<BufWriter<ChildStdin>>` pattern for clean shutdown.** Can't move out of a struct that implements `Drop`. Using `Option` and `.take()` is the standard pattern for E2E test process management.
+- **Review caught the `pub store()` accessor leak.** Adding a public accessor to expose internals for test convenience is a code smell. The right fix was making the actual tool methods callable instead.
+
+---
+
+## Component 10: CI/CD
+
+- **macOS x86_64 cross-compile is fragile.** `macos-latest` is Apple Silicon. Cross-compiling C code (rusqlite bundled SQLite) to x86_64 from ARM requires explicit toolchain configuration. Dropped the target entirely — Intel Mac users can build from source or use Rosetta.
+- **SHA-pin all Actions except `dtolnay/rust-toolchain`.** Mutable tags are the primary supply chain attack vector for GitHub Actions. `dtolnay/rust-toolchain` uses branch names as its intended interface, which is an accepted exception.
+- **Use `gh` CLI instead of third-party release Actions.** `softprops/action-gh-release` is community-maintained with `contents: write` access. The `gh` CLI is pre-installed on all runners and eliminates a supply-chain dependency.
+- **Draft-then-publish pattern for release atomicity.** Create as draft, upload all artifacts, verify count, then publish. Add idempotent cleanup (`gh release delete` before create) so the workflow is re-runnable without manual intervention.
+- **Per-job permissions are more secure than workflow-level.** Build jobs only need `contents: read`; only the release job needs `contents: write`. This limits blast radius if a build step is compromised.

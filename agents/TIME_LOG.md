@@ -45,3 +45,6 @@
 | 2026-04-27 | Component 5 | 15 min | Code review: 5 personas, 1 Critical (list_labels/stats not actor-scoped) + 1 High (API inconsistency). Fixed. |
 | 2026-04-27 | Component 5 | 5 min | Merge, update tracking files |
 | | | **~615 min** | **Total** |
+
+| 2026-04-27 | Component 12: Integration & E2E tests | Implementation + code review + fixes | ~45 min |
+| 2026-04-27 | Component 10: CI/CD | Design + design review + code + code review | ~30 min |

@@ -102,3 +102,13 @@
 **Decision**: Single `Db` trait in `db.rs`. `StoreManager::db()` returns `&dyn Db`. The trait starts with store management methods in Component 1 and grows as each component adds its method signatures during its design phase. All SQL lives in `impl Db for Connection`.
 
 **Consequences**: Slightly more upfront design work per component (must define trait method signatures before coding). But parallel agents can work independently against the trait contract. Schema changes are single-file. No SQL scattered across modules.
+
+---
+
+## ADR-008: Make tool methods and param structs pub for integration testing
+
+**Date**: 2026-04-27
+**Status**: Accepted
+**Context**: The `#[tool]` macro from rmcp generates private methods by default. The integration test design called for calling tool methods directly via `Parameters(serde_json::from_value(...))` to test the full serde → run() → business logic → serialization path. With private methods, integration tests (which are external crates) cannot call them.
+**Decision**: Made all 22 tool methods `pub async fn` and all param structs/enums `pub`. This is supported by rmcp (their own test examples use `pub async fn` on `#[tool]` methods). Removed the `pub store()` accessor that was added as a workaround.
+**Consequence**: The crate's public API surface is larger. Param structs and tool methods are now part of the public contract. This is acceptable because the crate is a binary, not a library consumed by other crates. The benefit is that integration tests now exercise the full tool layer including serde deserialization, `run()` closure, error mapping, and JSON serialization.

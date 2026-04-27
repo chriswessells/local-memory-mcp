@@ -13,9 +13,22 @@ This document defines the process for designing, reviewing, building, and shippi
 
 ---
 
+## Model Assignment
+
+| Phase | Model | Rationale |
+|-------|-------|-----------|
+| Design (detailed design, implementation plan, DAG, sub-agent instructions) | **opus-4.6** | Strongest reasoning for architecture, edge cases, and instruction clarity |
+| Design Review (5 personas) | **opus-4.6** | Needs deep analysis to find Critical/High issues |
+| Coding (implementation via sub-agents) | **sonnet-4.6** | Fast, accurate code generation from clear instructions |
+| Code Review (5 personas) | **opus-4.6** | Needs deep analysis to find implementation bugs |
+
+The orchestrating agent (main chat) uses whichever model is active. Sub-agents spawned for coding tasks should use `sonnet-4.6`. Sub-agents spawned for review tasks should use `opus-4.6`.
+
+---
+
 ## Phases
 
-### Phase 1: Design
+### Phase 1: Design *(opus-4.6)*
 
 For each component, produce:
 
@@ -26,7 +39,7 @@ For each component, produce:
 
 All design artifacts go in the `design/` directory.
 
-### Phase 2: Design Review
+### Phase 2: Design Review *(opus-4.6)*
 
 Run all five review personas against the design artifacts:
 
@@ -46,7 +59,7 @@ Each persona produces findings with severity: **Critical | High | Medium | Low**
 
 **What counts as substantial**: Any change to a public API signature, any new module or struct, any change to the concurrency or synchronization model, any new dependency, any change to the data model or schema, any change to error handling strategy. When in doubt, re-review.
 
-### Phase 3: Coding
+### Phase 3: Coding *(sonnet-4.6)*
 
 **Pre-coding checklist** (all must be true before writing any code):
 - [ ] Design doc exists in `design/` with: detailed design, implementation plan, DAG, sub-agent instructions
@@ -63,7 +76,7 @@ Implement the approved design:
 4. Log time spent in `agents/TIME_LOG.md`
 5. Record any deviations from the design in `agents/ADR.md`
 
-### Phase 4: Code Review
+### Phase 4: Code Review *(opus-4.6)*
 
 Run all five review personas against the implementation.
 
