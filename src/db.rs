@@ -908,6 +908,11 @@ impl Db for Connection {
                 "embedding must have exactly {EMBEDDING_DIM} dimensions"
             )));
         }
+        if params.embedding.iter().any(|v| !v.is_finite()) {
+            return Err(MemoryError::InvalidInput(
+                "embedding contains NaN or infinity".into(),
+            ));
+        }
 
         let query_bytes: Vec<u8> = params
             .embedding

@@ -122,6 +122,11 @@ fn validate_recall_params(params: &RecallParams<'_>) -> Result<(), MemoryError> 
                 "embedding must have exactly {EMBEDDING_DIM} dimensions"
             )));
         }
+        if emb.iter().any(|v| !v.is_finite()) {
+            return Err(MemoryError::InvalidInput(
+                "embedding contains NaN or infinity".into(),
+            ));
+        }
     }
 
     if params.namespace.is_some() && params.namespace_prefix.is_some() {

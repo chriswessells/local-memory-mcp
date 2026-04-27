@@ -149,7 +149,6 @@ _(none)_
 - [ ] Add RRF test case for completely disjoint lists (no overlap)
 
 ### From Component 4 code review (Medium/Low)
-- [ ] Add NaN/infinity validation on embedding input in validate_recall_params and search_vector
 - [ ] Extract shared validation helpers (validate_non_empty, validate_max_len) to src/validation.rs
 - [ ] Magic column index 11 for score/distance — define constant or use named column access
 - [ ] Deduplicate mem_params test helper across db.rs, memories.rs, search.rs
