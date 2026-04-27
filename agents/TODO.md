@@ -11,11 +11,11 @@
 - [x] Create GitHub repository
 - [x] Create agents directory with workflow and review personas
 - [x] Create tracking files (this file, ADR, LESSONS_LEARNED, TIME_LOG)
-- [x] Component 1: Core DB layer — design (4 review rounds, 39 findings resolved), code (23 tests), ready for code review
+- [x] Component 1: Core DB layer — design (4 review rounds, 39 findings resolved), code (21 tests), code review (4 High fixed), merged to main
 
 ## In Progress
 
-- [ ] Component 1: Core DB layer — **Phase 5 merge pending** (4 High code review findings fixed, tests pruned to 21 Critical/High paths only)
+_(none)_
 
 ## Planned — Implementation (per-component, each goes through full workflow)
 
