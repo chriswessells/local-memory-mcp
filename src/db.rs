@@ -7,6 +7,10 @@ use crate::graph::{
 use crate::memories::{ConsolidateAction, InsertMemoryParams, ListMemoriesParams, Memory};
 use crate::namespaces::{ListNamespacesParams, Namespace, NAMESPACE_DELETE_CHUNK_SIZE};
 use crate::search::{SearchFtsParams, SearchVectorParams};
+use crate::sessions::{
+    Branch, Checkpoint, InsertBranchParams, InsertCheckpointParams, ListBranchesParams,
+    ListCheckpointsParams,
+};
 use rusqlite::Connection;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -372,10 +376,34 @@ pub trait Db {
     fn graph_stats(&self, actor_id: &str) -> Result<GraphStats, MemoryError>;
 
     // -- Sessions (Component 6) --
-    // fn create_checkpoint(...) -> Result<String, MemoryError>;
-    // fn create_branch(...) -> Result<String, MemoryError>;
-    // fn list_checkpoints(session_id: &str) -> Result<Vec<Checkpoint>, MemoryError>;
-    // fn list_branches(session_id: &str) -> Result<Vec<Branch>, MemoryError>;
+
+    /// Create a checkpoint pointing to a specific event within a session.
+    /// Precondition: params must be pre-validated. event_id must exist in events for (actor_id, session_id).
+    /// Returns InvalidInput if (session_id, name) already exists.
+    fn create_checkpoint(
+        &self,
+        params: &InsertCheckpointParams<'_>,
+    ) -> Result<Checkpoint, MemoryError>;
+
+    /// Fork a conversation by creating a branch from a specific event.
+    /// Precondition: params must be pre-validated. root_event_id must exist in events for actor_id.
+    /// If parent_branch_id provided, it must exist with matching session_id.
+    fn create_branch(
+        &self,
+        params: &InsertBranchParams<'_>,
+    ) -> Result<Branch, MemoryError>;
+
+    /// List checkpoints for a session, scoped to actor. Ordered by created_at ASC, id ASC.
+    fn list_checkpoints(
+        &self,
+        params: &ListCheckpointsParams<'_>,
+    ) -> Result<Vec<Checkpoint>, MemoryError>;
+
+    /// List branches for a session, scoped to actor via root_event_id JOIN. Ordered by created_at ASC, id ASC.
+    fn list_branches(
+        &self,
+        params: &ListBranchesParams<'_>,
+    ) -> Result<Vec<Branch>, MemoryError>;
 
     // -- Namespaces (Component 8) --
 
@@ -1808,6 +1836,263 @@ impl Db for Connection {
         );
         Ok(total_deleted)
     }
+
+    // -- Sessions (Component 6) --
+
+    fn create_checkpoint(
+        &self,
+        params: &InsertCheckpointParams<'_>,
+    ) -> Result<Checkpoint, MemoryError> {
+        let id = uuid::Uuid::new_v4().to_string();
+
+        let tx = self.unchecked_transaction().map_err(|e| {
+            tracing::error!("create_checkpoint transaction failed: {e}");
+            MemoryError::QueryFailed("failed to begin transaction".into())
+        })?;
+
+        // Step 1: verify event belongs to actor+session
+        let count: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE id = ?1 AND actor_id = ?2 AND session_id = ?3",
+                rusqlite::params![params.event_id, params.actor_id, params.session_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| {
+                tracing::error!("create_checkpoint event verify failed: {e}");
+                MemoryError::QueryFailed("failed to verify event".into())
+            })?;
+
+        if count == 0 {
+            return Err(MemoryError::NotFound(
+                "event not found for this actor and session".into(),
+            ));
+        }
+
+        // Step 2: insert checkpoint
+        let cp = tx
+            .query_row(
+                "INSERT INTO checkpoints (id, session_id, actor_id, name, event_id, metadata)
+                 VALUES (:id, :session_id, :actor_id, :name, :event_id, :metadata)
+                 RETURNING id, session_id, actor_id, name, event_id, metadata, created_at",
+                rusqlite::named_params! {
+                    ":id": id,
+                    ":session_id": params.session_id,
+                    ":actor_id": params.actor_id,
+                    ":name": params.name,
+                    ":event_id": params.event_id,
+                    ":metadata": params.metadata,
+                },
+                |row| {
+                    Ok(Checkpoint {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        actor_id: row.get(2)?,
+                        name: row.get(3)?,
+                        event_id: row.get(4)?,
+                        metadata: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                },
+            )
+            .map_err(|e| {
+                if let rusqlite::Error::SqliteFailure(ref err, _) = e {
+                    if err.code == rusqlite::ErrorCode::ConstraintViolation {
+                        return MemoryError::InvalidInput(
+                            "a checkpoint with this name already exists for the session".into(),
+                        );
+                    }
+                }
+                tracing::error!("create_checkpoint insert failed: {e}");
+                MemoryError::QueryFailed("failed to insert checkpoint".into())
+            })?;
+
+        tx.commit().map_err(|e| {
+            tracing::error!("create_checkpoint commit failed: {e}");
+            MemoryError::QueryFailed("failed to commit checkpoint".into())
+        })?;
+
+        Ok(cp)
+    }
+
+    fn create_branch(
+        &self,
+        params: &InsertBranchParams<'_>,
+    ) -> Result<Branch, MemoryError> {
+        let id = uuid::Uuid::new_v4().to_string();
+
+        let tx = self.unchecked_transaction().map_err(|e| {
+            tracing::error!("create_branch transaction failed: {e}");
+            MemoryError::QueryFailed("failed to begin transaction".into())
+        })?;
+
+        // Step 1: verify root event belongs to actor
+        let count: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE id = ?1 AND actor_id = ?2",
+                rusqlite::params![params.root_event_id, params.actor_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| {
+                tracing::error!("create_branch event verify failed: {e}");
+                MemoryError::QueryFailed("failed to verify root event".into())
+            })?;
+
+        if count == 0 {
+            return Err(MemoryError::NotFound(
+                "root event not found for this actor".into(),
+            ));
+        }
+
+        // Step 2 (conditional): verify parent_branch_id if provided
+        if let Some(parent_id) = params.parent_branch_id {
+            let parent_count: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM branches WHERE id = ?1 AND session_id = ?2",
+                    rusqlite::params![parent_id, params.session_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| {
+                    tracing::error!("create_branch parent verify failed: {e}");
+                    MemoryError::QueryFailed("failed to verify parent branch".into())
+                })?;
+
+            if parent_count == 0 {
+                return Err(MemoryError::NotFound(
+                    "parent branch not found for this session".into(),
+                ));
+            }
+        }
+
+        // Step 3: insert branch
+        let branch = tx
+            .query_row(
+                "INSERT INTO branches (id, session_id, name, parent_branch_id, root_event_id)
+                 VALUES (:id, :session_id, :name, :parent_branch_id, :root_event_id)
+                 RETURNING id, session_id, name, parent_branch_id, root_event_id, created_at",
+                rusqlite::named_params! {
+                    ":id": id,
+                    ":session_id": params.session_id,
+                    ":name": params.name,
+                    ":parent_branch_id": params.parent_branch_id,
+                    ":root_event_id": params.root_event_id,
+                },
+                |row| {
+                    Ok(Branch {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        name: row.get(2)?,
+                        parent_branch_id: row.get(3)?,
+                        root_event_id: row.get(4)?,
+                        created_at: row.get(5)?,
+                    })
+                },
+            )
+            .map_err(|e| {
+                tracing::error!("create_branch insert failed: {e}");
+                MemoryError::QueryFailed("failed to insert branch".into())
+            })?;
+
+        tx.commit().map_err(|e| {
+            tracing::error!("create_branch commit failed: {e}");
+            MemoryError::QueryFailed("failed to commit branch".into())
+        })?;
+
+        Ok(branch)
+    }
+
+    fn list_checkpoints(
+        &self,
+        params: &ListCheckpointsParams<'_>,
+    ) -> Result<Vec<Checkpoint>, MemoryError> {
+        let mut stmt = self
+            .prepare(
+                "SELECT id, session_id, actor_id, name, event_id, metadata, created_at
+                 FROM checkpoints
+                 WHERE actor_id = ?1 AND session_id = ?2
+                 ORDER BY created_at ASC, id ASC
+                 LIMIT ?3 OFFSET ?4",
+            )
+            .map_err(|e| {
+                tracing::error!("list_checkpoints prepare failed: {e}");
+                MemoryError::QueryFailed("failed to prepare list_checkpoints query".into())
+            })?;
+
+        let rows = stmt
+            .query_map(
+                rusqlite::params![params.actor_id, params.session_id, params.limit, params.offset],
+                |row| {
+                    Ok(Checkpoint {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        actor_id: row.get(2)?,
+                        name: row.get(3)?,
+                        event_id: row.get(4)?,
+                        metadata: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                },
+            )
+            .map_err(|e| {
+                tracing::error!("list_checkpoints query failed: {e}");
+                MemoryError::QueryFailed("failed to query checkpoints".into())
+            })?;
+
+        let mut checkpoints = Vec::new();
+        for row in rows {
+            checkpoints.push(row.map_err(|e| {
+                tracing::error!("list_checkpoints row read failed: {e}");
+                MemoryError::QueryFailed("failed to read checkpoint row".into())
+            })?);
+        }
+        Ok(checkpoints)
+    }
+
+    fn list_branches(
+        &self,
+        params: &ListBranchesParams<'_>,
+    ) -> Result<Vec<Branch>, MemoryError> {
+        let mut stmt = self
+            .prepare(
+                "SELECT b.id, b.session_id, b.name, b.parent_branch_id, b.root_event_id, b.created_at
+                 FROM branches b
+                 JOIN events e ON e.id = b.root_event_id AND e.actor_id = ?1
+                 WHERE b.session_id = ?2
+                 ORDER BY b.created_at ASC, b.id ASC
+                 LIMIT ?3 OFFSET ?4",
+            )
+            .map_err(|e| {
+                tracing::error!("list_branches prepare failed: {e}");
+                MemoryError::QueryFailed("failed to prepare list_branches query".into())
+            })?;
+
+        let rows = stmt
+            .query_map(
+                rusqlite::params![params.actor_id, params.session_id, params.limit, params.offset],
+                |row| {
+                    Ok(Branch {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        name: row.get(2)?,
+                        parent_branch_id: row.get(3)?,
+                        root_event_id: row.get(4)?,
+                        created_at: row.get(5)?,
+                    })
+                },
+            )
+            .map_err(|e| {
+                tracing::error!("list_branches query failed: {e}");
+                MemoryError::QueryFailed("failed to query branches".into())
+            })?;
+
+        let mut branches = Vec::new();
+        for row in rows {
+            branches.push(row.map_err(|e| {
+                tracing::error!("list_branches row read failed: {e}");
+                MemoryError::QueryFailed("failed to read branch row".into())
+            })?);
+        }
+        Ok(branches)
+    }
 }
 
 // Compile-time object safety assertion
@@ -3199,5 +3484,233 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM knowledge_edges", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    // -- Session tests (Component 6) --
+
+    fn make_event(conn: &Connection, actor: &str, session: &str) -> crate::events::Event {
+        conn.insert_event(&InsertEventParams {
+            actor_id: actor,
+            session_id: session,
+            event_type: "conversation",
+            role: Some("user"),
+            content: Some("hello"),
+            blob_data: None,
+            metadata: None,
+            branch_id: None,
+            expires_at: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_create_checkpoint_basic() {
+        let (_dir, conn) = open_temp();
+        let event = make_event(&conn, "actor1", "session1");
+        let cp = conn
+            .create_checkpoint(&InsertCheckpointParams {
+                actor_id: "actor1",
+                session_id: "session1",
+                name: "start",
+                event_id: &event.id,
+                metadata: None,
+            })
+            .unwrap();
+        assert!(!cp.id.is_empty());
+        assert_eq!(cp.actor_id, "actor1");
+        assert_eq!(cp.session_id, "session1");
+        assert_eq!(cp.name, "start");
+        assert_eq!(cp.event_id, event.id);
+        assert!(cp.metadata.is_none());
+        assert!(!cp.created_at.is_empty());
+    }
+
+    #[test]
+    fn test_create_checkpoint_wrong_actor() {
+        let (_dir, conn) = open_temp();
+        let event = make_event(&conn, "actor1", "session1");
+        let result = conn.create_checkpoint(&InsertCheckpointParams {
+            actor_id: "actor2", // wrong actor
+            session_id: "session1",
+            name: "cp",
+            event_id: &event.id,
+            metadata: None,
+        });
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_create_checkpoint_wrong_session() {
+        let (_dir, conn) = open_temp();
+        let event = make_event(&conn, "actor1", "session1");
+        let result = conn.create_checkpoint(&InsertCheckpointParams {
+            actor_id: "actor1",
+            session_id: "session2", // wrong session
+            name: "cp",
+            event_id: &event.id,
+            metadata: None,
+        });
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_create_checkpoint_name_conflict() {
+        let (_dir, conn) = open_temp();
+        let event = make_event(&conn, "actor1", "session1");
+        conn.create_checkpoint(&InsertCheckpointParams {
+            actor_id: "actor1",
+            session_id: "session1",
+            name: "cp1",
+            event_id: &event.id,
+            metadata: None,
+        })
+        .unwrap();
+        let result = conn.create_checkpoint(&InsertCheckpointParams {
+            actor_id: "actor1",
+            session_id: "session1",
+            name: "cp1", // same name, same session
+            event_id: &event.id,
+            metadata: None,
+        });
+        assert!(matches!(result, Err(MemoryError::InvalidInput(_))));
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("already exists"));
+    }
+
+    #[test]
+    fn test_create_checkpoint_missing_event() {
+        let (_dir, conn) = open_temp();
+        let result = conn.create_checkpoint(&InsertCheckpointParams {
+            actor_id: "actor1",
+            session_id: "session1",
+            name: "cp",
+            event_id: "nonexistent-event-id-xxxx",
+            metadata: None,
+        });
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_list_checkpoints_empty() {
+        let (_dir, conn) = open_temp();
+        let result = conn
+            .list_checkpoints(&ListCheckpointsParams {
+                actor_id: "actor1",
+                session_id: "session1",
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_list_checkpoints_actor_scoped() {
+        let (_dir, conn) = open_temp();
+        let ev_a = make_event(&conn, "actorA", "session1");
+        conn.create_checkpoint(&InsertCheckpointParams {
+            actor_id: "actorA",
+            session_id: "session1",
+            name: "cp-a",
+            event_id: &ev_a.id,
+            metadata: None,
+        })
+        .unwrap();
+        // actorB should not see actorA's checkpoint
+        let result = conn
+            .list_checkpoints(&ListCheckpointsParams {
+                actor_id: "actorB",
+                session_id: "session1",
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_create_branch_basic() {
+        let (_dir, conn) = open_temp();
+        let event = make_event(&conn, "actor1", "session1");
+        let branch = conn
+            .create_branch(&InsertBranchParams {
+                actor_id: "actor1",
+                session_id: "session1",
+                root_event_id: &event.id,
+                name: Some("feature"),
+                parent_branch_id: None,
+            })
+            .unwrap();
+        assert!(!branch.id.is_empty());
+        assert_eq!(branch.session_id, "session1");
+        assert_eq!(branch.name, Some("feature".to_string()));
+        assert_eq!(branch.root_event_id, event.id);
+        assert!(branch.parent_branch_id.is_none());
+        assert!(!branch.created_at.is_empty());
+    }
+
+    #[test]
+    fn test_create_branch_missing_root_event() {
+        let (_dir, conn) = open_temp();
+        let result = conn.create_branch(&InsertBranchParams {
+            actor_id: "actor1",
+            session_id: "session1",
+            root_event_id: "nonexistent-event-id-xxxx",
+            name: None,
+            parent_branch_id: None,
+        });
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_create_branch_wrong_actor() {
+        let (_dir, conn) = open_temp();
+        let event = make_event(&conn, "actor1", "session1");
+        let result = conn.create_branch(&InsertBranchParams {
+            actor_id: "actor2", // wrong actor
+            session_id: "session1",
+            root_event_id: &event.id,
+            name: None,
+            parent_branch_id: None,
+        });
+        assert!(matches!(result, Err(MemoryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_list_branches_empty() {
+        let (_dir, conn) = open_temp();
+        let result = conn
+            .list_branches(&ListBranchesParams {
+                actor_id: "actor1",
+                session_id: "session1",
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_list_branches_actor_scoped() {
+        let (_dir, conn) = open_temp();
+        let ev_a = make_event(&conn, "actorA", "session1");
+        conn.create_branch(&InsertBranchParams {
+            actor_id: "actorA",
+            session_id: "session1",
+            root_event_id: &ev_a.id,
+            name: Some("branch-a"),
+            parent_branch_id: None,
+        })
+        .unwrap();
+        // actorB should not see actorA's branch
+        let result = conn
+            .list_branches(&ListBranchesParams {
+                actor_id: "actorB",
+                session_id: "session1",
+                limit: 100,
+                offset: 0,
+            })
+            .unwrap();
+        assert!(result.is_empty());
     }
 }

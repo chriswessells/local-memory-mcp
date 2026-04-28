@@ -52,7 +52,7 @@
 
 ## Planned — Implementation (per-component, each goes through full workflow)
 
-- [ ] Component 6: Session tools (checkpoints, branches) — design, review, code, review
+- [x] Component 6: Session tools — design (2 review rounds, 2 High resolved), code (24 tests), code review (0 Critical/0 High), merged
 - [x] Component 8: Namespace tools — design (2 review rounds, 1 Critical + 4 High resolved), code (11 tests, pruned to High/Critical paths only), merged
 - [ ] Component 9: MCP server — ✅ done (moved to Completed)
 - [x] Component 10: CI/CD — design (2 Critical + 6 High resolved in design review), code (ci.yml + release.yml), code review (3 High fixed: release atomicity, artifact verification, per-job permissions), merged
@@ -258,6 +258,23 @@
 - [ ] No shutdown timeout on hung cleanup (wrap in `tokio::time::timeout`)
 - [ ] `shutdown_signal()` is untestable/untested (extract to lib crate or add e2e test)
 - [ ] Gate `with_base_dir()` behind `#[cfg(test)]` to prevent production use without security checks
+
+### From Component 6 design review (Medium/Low)
+- [ ] create_branch: document EXCLUSIVE lock dependency in comment (A4)
+- [ ] parent_branch actor cross-check: verify parent branch root event also belongs to actor_id (A5)
+- [ ] metadata wire format: consider deserializing to serde_json::Value in Checkpoint/Branch structs instead of raw JSON string (A6)
+- [ ] Use c.is_control() in validate_no_control_chars (I1 — already applied to design; enforce in code)
+- [ ] Verify dotted tool names work in all target Kiro/MCP clients (I2)
+- [ ] Orphan branches on event TTL expiry: add to delete_expired_events to prevent dangling root_event_id references, or document behavior in ADR (A3/R4)
+- [ ] Map SQLITE_FULL to user-friendly "database is out of space" error (R2)
+- [ ] Document unchecked_transaction commit/rollback flow explicitly (R3)
+- [ ] Add tracing spans to sessions.rs public functions (R5)
+- [ ] Map SQLITE_BUSY to MemoryError::StoreLocked in new session methods (R6)
+- [ ] Consolidate MAX_CHECKPOINT_NAME_LEN / MAX_BRANCH_NAME_LEN to shared constant (M4)
+- [ ] Add doc comment to sessions.rs clarifying scope vs events.rs (M5)
+- [ ] UUID format validation on event_id and parent_branch_id fields (S3)
+- [ ] Ensure serde_json parse errors are never propagated as-is in session tool handlers (S4)
+- [ ] Document that session tool handlers log no user-supplied content (S5)
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)

@@ -14,6 +14,7 @@ use crate::graph::{
 use crate::memories::{self, ConsolidateAction, InsertMemoryParams, ListMemoriesParams};
 use crate::namespaces;
 use crate::search::{self, RecallParams};
+use crate::sessions;
 use crate::store::StoreManager;
 
 // --- MemoryServer ---
@@ -330,6 +331,49 @@ pub struct ListNamespacesToolParams {
 pub struct DeleteNamespaceToolParams {
     actor_id: String,
     name: String,
+}
+
+// -- Session param structs (Component 6) --
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CheckpointToolParams {
+    actor_id: String,
+    session_id: String,
+    name: String,
+    event_id: String,
+    #[serde(default)]
+    metadata: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct BranchToolParams {
+    actor_id: String,
+    session_id: String,
+    root_event_id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    parent_branch_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListCheckpointsToolParams {
+    actor_id: String,
+    session_id: String,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListBranchesToolParams {
+    actor_id: String,
+    session_id: String,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u32>,
 }
 
 // --- Helpers ---
@@ -872,6 +916,107 @@ impl MemoryServer {
         })
         .await
     }
+
+    // -- Session tools (Component 6) --
+
+    #[tool(
+        name = "memory.checkpoint",
+        description = "Create a named checkpoint at a specific event within a session. \
+                       Checkpoints are named snapshots used for workflow resumption and \
+                       conversation bookmarks. Name must be unique per session. Returns \
+                       the created checkpoint object."
+    )]
+    pub async fn checkpoint(
+        &self,
+        Parameters(params): Parameters<CheckpointToolParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let p = sessions::InsertCheckpointParams {
+                actor_id: &params.actor_id,
+                session_id: &params.session_id,
+                name: &params.name,
+                event_id: &params.event_id,
+                metadata: params.metadata.as_deref(),
+            };
+            sessions::create_checkpoint(db, &p)
+                .map(|cp| serde_json::json!({ "checkpoint": cp }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "memory.branch",
+        description = "Fork a conversation by creating a branch from a specific event. \
+                       Branches enable alternative conversation paths, message editing, \
+                       and what-if scenarios. Returns the created branch object with its ID \
+                       to use as branch_id in memory.add_event."
+    )]
+    pub async fn branch(
+        &self,
+        Parameters(params): Parameters<BranchToolParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let p = sessions::InsertBranchParams {
+                actor_id: &params.actor_id,
+                session_id: &params.session_id,
+                root_event_id: &params.root_event_id,
+                name: params.name.as_deref(),
+                parent_branch_id: params.parent_branch_id.as_deref(),
+            };
+            sessions::create_branch(db, &p)
+                .map(|br| serde_json::json!({ "branch": br }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "memory.list_checkpoints",
+        description = "List all checkpoints for a session, ordered by creation time. \
+                       Returns an array of checkpoint objects with names and event IDs."
+    )]
+    pub async fn list_checkpoints(
+        &self,
+        Parameters(params): Parameters<ListCheckpointsToolParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let p = sessions::ListCheckpointsParams {
+                actor_id: &params.actor_id,
+                session_id: &params.session_id,
+                limit: params.limit.unwrap_or(sessions::DEFAULT_CHECKPOINT_LIMIT),
+                offset: params.offset.unwrap_or(0),
+            };
+            sessions::list_checkpoints(db, &p)
+                .map(|cps| serde_json::json!({ "checkpoints": cps }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "memory.list_branches",
+        description = "List branches for a session, ordered by creation time. \
+                       Returns an array of branch objects including their root event IDs \
+                       and optional names. Use the returned branch id as branch_id in memory.add_event."
+    )]
+    pub async fn list_branches(
+        &self,
+        Parameters(params): Parameters<ListBranchesToolParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let p = sessions::ListBranchesParams {
+                actor_id: &params.actor_id,
+                session_id: &params.session_id,
+                limit: params.limit.unwrap_or(sessions::DEFAULT_CHECKPOINT_LIMIT),
+                offset: params.offset.unwrap_or(0),
+            };
+            sessions::list_branches(db, &p)
+                .map(|brs| serde_json::json!({ "branches": brs }))
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -1011,5 +1156,125 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not_found"));
+    }
+
+    // -- Session tool tests (Component 6) --
+
+    fn add_test_event(server: &MemoryServer, actor: &str, session: &str) -> String {
+        let actor = actor.to_string();
+        let session = session.to_string();
+        // Use a blocking call pattern compatible with the test
+        let store = server.store.clone();
+        let event = std::thread::spawn(move || {
+            let mgr = store.lock().unwrap();
+            let db = mgr.db().unwrap();
+            crate::events::add_event(
+                db,
+                &crate::events::InsertEventParams {
+                    actor_id: &actor,
+                    session_id: &session,
+                    event_type: "conversation",
+                    role: Some("user"),
+                    content: Some("hello"),
+                    blob_data: None,
+                    metadata: None,
+                    branch_id: None,
+                    expires_at: None,
+                },
+            )
+            .unwrap()
+        })
+        .join()
+        .unwrap();
+        event.id
+    }
+
+    #[tokio::test]
+    async fn test_tool_checkpoint_basic() {
+        let server = make_server();
+        let event_id = add_test_event(&server, "actor1", "session1");
+        let result = server
+            .run(move |mgr| {
+                let db = mgr.db()?;
+                let p = sessions::InsertCheckpointParams {
+                    actor_id: "actor1",
+                    session_id: "session1",
+                    name: "my-checkpoint",
+                    event_id: &event_id,
+                    metadata: None,
+                };
+                sessions::create_checkpoint(db, &p)
+                    .map(|cp| serde_json::json!({ "checkpoint": cp }))
+            })
+            .await;
+        assert!(result.is_ok(), "unexpected error: {:?}", result);
+        let v: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(v["checkpoint"]["name"], "my-checkpoint");
+    }
+
+    #[tokio::test]
+    async fn test_tool_branch_basic() {
+        let server = make_server();
+        let event_id = add_test_event(&server, "actor1", "session1");
+        let eid = event_id.clone();
+        let result = server
+            .run(move |mgr| {
+                let db = mgr.db()?;
+                let p = sessions::InsertBranchParams {
+                    actor_id: "actor1",
+                    session_id: "session1",
+                    root_event_id: &eid,
+                    name: None,
+                    parent_branch_id: None,
+                };
+                sessions::create_branch(db, &p)
+                    .map(|br| serde_json::json!({ "branch": br }))
+            })
+            .await;
+        assert!(result.is_ok(), "unexpected error: {:?}", result);
+        let v: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(v["branch"]["root_event_id"], event_id);
+    }
+
+    #[tokio::test]
+    async fn test_tool_list_checkpoints_empty() {
+        let server = make_server();
+        let result = server
+            .run(move |mgr| {
+                let db = mgr.db()?;
+                let p = sessions::ListCheckpointsParams {
+                    actor_id: "actor1",
+                    session_id: "session1",
+                    limit: 100,
+                    offset: 0,
+                };
+                sessions::list_checkpoints(db, &p)
+                    .map(|cps| serde_json::json!({ "checkpoints": cps }))
+            })
+            .await;
+        assert!(result.is_ok());
+        let v: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(v["checkpoints"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_tool_list_branches_empty() {
+        let server = make_server();
+        let result = server
+            .run(move |mgr| {
+                let db = mgr.db()?;
+                let p = sessions::ListBranchesParams {
+                    actor_id: "actor1",
+                    session_id: "session1",
+                    limit: 100,
+                    offset: 0,
+                };
+                sessions::list_branches(db, &p)
+                    .map(|brs| serde_json::json!({ "branches": brs }))
+            })
+            .await;
+        assert!(result.is_ok());
+        let v: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(v["branches"], serde_json::json!([]));
     }
 }

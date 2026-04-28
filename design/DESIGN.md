@@ -379,9 +379,9 @@ Schema version is tracked via `PRAGMA user_version` (built-in SQLite integer in 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `memory.checkpoint` | `session_id`, `actor_id`, `name`, `event_id`, `metadata?` | Create a named checkpoint at a specific event |
-| `memory.branch` | `session_id`, `root_event_id`, `name?`, `parent_branch_id?` | Fork conversation from any event, creating an alternative path |
-| `memory.list_checkpoints` | `session_id` | List checkpoints for a session |
-| `memory.list_branches` | `session_id` | List branches for a session |
+| `memory.branch` | `session_id`, `actor_id`, `root_event_id`, `name?`, `parent_branch_id?` | Fork conversation from any event, creating an alternative path |
+| `memory.list_checkpoints` | `actor_id`, `session_id`, `limit?`, `offset?` | List checkpoints for a session |
+| `memory.list_branches` | `actor_id`, `session_id`, `limit?`, `offset?` | List branches for a session |
 
 ### Store management (local-only, not in AgentCore)
 

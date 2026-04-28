@@ -5,5 +5,6 @@ pub mod graph;
 pub mod memories;
 pub mod namespaces;
 pub mod search;
+pub mod sessions;
 pub mod store;
 pub mod tools;
