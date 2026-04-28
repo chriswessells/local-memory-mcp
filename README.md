@@ -56,7 +56,7 @@ The installer prints the exact config with the correct absolute path after insta
 
 ## Status
 
-The server is functional with 22 MCP tools, 111 tests, CI/CD, and a one-command installer.
+The server is functional with 29 MCP tools, 149 tests, CI/CD, and a one-command installer.
 
 | Component | Status |
 |-----------|--------|
@@ -65,13 +65,13 @@ The server is functional with 22 MCP tools, 111 tests, CI/CD, and a one-command 
 | Memory tools (long-term memory CRUD) | ✅ Done |
 | Search (FTS5 + vector + hybrid RRF) | ✅ Done |
 | Knowledge graph (edges, traversal, stats) | ✅ Done |
-| MCP server (stdio transport, 22 tools) | ✅ Done |
+| Session tools (checkpoints, branches) | ✅ Done |
+| Namespace tools | ✅ Done |
+| Store management tools | ✅ Done |
+| MCP server (stdio transport, 29 tools) | ✅ Done |
 | CI/CD (GitHub Actions, release workflow) | ✅ Done |
 | Installers (install.sh) | ✅ Done |
-| Integration & E2E tests (111 tests) | ✅ Done |
-| Session tools (checkpoints, branches) | 🔲 Planned |
-| Store management tools | 🔲 Planned |
-| Namespace tools | 🔲 Planned |
+| Integration & E2E tests (149 tests) | ✅ Done |
 
 ## Features
 
@@ -82,11 +82,13 @@ The server is functional with 22 MCP tools, 111 tests, CI/CD, and a one-command 
 - **Hybrid search** — Reciprocal Rank Fusion (RRF) combining FTS5 and vector results
 - **Knowledge graph** — Typed, directed edges between memories with multi-hop BFS traversal
 - **Memory consolidation** — Update or invalidate memories with an immutable audit trail
+- **Session checkpoints & branches** — Named snapshots and conversation forks for workflow resumption and what-if scenarios
+- **Namespace registry** — Register and manage namespace paths with per-actor scoped bulk-delete
 - **Multi-store isolation** — Each memory store is a separate SQLite file, independently switchable
 - **Namespace hierarchy** — Organize memories in paths like `/user/{actorId}/preferences`
 - **Actor isolation** — All data is scoped by actor ID; actors cannot see each other's data
 
-## MCP Tools (22)
+## MCP Tools (29)
 
 ### Short-term memory (events)
 
@@ -120,6 +122,23 @@ The server is functional with 22 MCP tools, 111 tests, CI/CD, and a one-command 
 | `graph.delete_edge` | Delete a relationship |
 | `graph.list_labels` | List distinct edge labels with counts |
 | `graph.stats` | Edge count, label distribution, most-connected memories |
+
+### Namespaces
+
+| Tool | Description |
+|------|-------------|
+| `memory.create_namespace` | Register a namespace with optional description (idempotent) |
+| `memory.list_namespaces` | List registered namespaces with optional prefix filter and pagination |
+| `memory.delete_namespace` | Delete all actor-scoped memories in a namespace and remove the registry entry |
+
+### Session tools (checkpoints & branches)
+
+| Tool | Description |
+|------|-------------|
+| `memory.checkpoint` | Create a named snapshot at a specific event for workflow resumption |
+| `memory.branch` | Fork a conversation from a specific event for alternative paths |
+| `memory.list_checkpoints` | List all checkpoints for a session, ordered by creation time |
+| `memory.list_branches` | List all branches for a session, ordered by creation time |
 
 ### Store management
 
