@@ -242,7 +242,7 @@
 - [ ] Add `--locked` to `cargo clippy` and `cargo test` in ci.yml for consistency with release
 - [ ] Split E2E tests into separate CI step for better diagnostic visibility
 - [ ] Add `Swatinem/rust-cache` to release workflow with `key: release-${{ matrix.target }}`
-- [ ] Update `actions/checkout` SHA to v4.3.1 for credential cleanup fix
+- [x] Update GitHub Actions to Node.js 24 runtime (checkout v6.0.2, rust-cache v2.9.1, upload-artifact v7.0.1, download-artifact v8.0.1) — done 2026-04-28
 - [ ] Pin `dtolnay/rust-toolchain` to SHA instead of branch name
 - [ ] Verify `cross` 0.2.5 compatibility with current `ubuntu-latest` runner
 - [ ] Add step names to ci.yml cargo run steps for Actions UI readability

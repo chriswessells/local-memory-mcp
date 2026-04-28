@@ -51,6 +51,7 @@
 | 2026-04-27 | Component 6: Session tools | Design review round 2: 5 personas, 0 Critical + 0 High. Fixed 2 Medium sub-agent instruction issues (task 4 transaction, task 5 ORDER BY). Design approved. | ~10 min |
 | 2026-04-27 | Component 6: Session tools | Coding: sessions.rs (types, validation, business logic), 4 Db trait methods + impls, 4 MCP tools, 24 new tests (139 total passing) | ~25 min |
 | 2026-04-27 | Component 6: Session tools | Code review: 5 personas, 0 Critical/0 High. Low items logged to backlog. | ~15 min |
+| 2026-04-28 | CI maintenance | Upgraded all GitHub Actions to Node.js 24 (checkout v6, rust-cache v2.9.1, upload/download-artifact v7/v8). Fixed cargo fmt divergence between macOS and Linux for sessions.rs, namespaces.rs, db.rs, tools.rs | ~20 min |
 | 2026-04-27 | Component 12: Integration & E2E tests | Implementation + code review + fixes | ~45 min |
 | 2026-04-27 | Component 10: CI/CD | Design + design review + code + code review | ~30 min |
 | 2026-04-27 | Component 11: Installers | Design + design review + code + code review | ~25 min |
