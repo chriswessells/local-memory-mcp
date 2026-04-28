@@ -24,6 +24,9 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
             cross: false
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            cross: false
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@stable
@@ -69,7 +72,7 @@ jobs:
         run: |
           count=$(ls -1 *.tar.gz 2>/dev/null | wc -l)
           echo "Found $count artifact(s)"
-          [ "$count" -eq 3 ] || { echo "::error::Expected 3 artifacts, found $count"; exit 1; }
+          [ "$count" -eq 4 ] || { echo "::error::Expected 4 artifacts, found $count"; exit 1; }
       - name: Checksums
         run: sha256sum *.tar.gz > SHA256SUMS.txt
       - name: Create release
