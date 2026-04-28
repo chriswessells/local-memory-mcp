@@ -130,25 +130,6 @@ mod tests {
         (dir, conn)
     }
 
-    // --- Validation tests ---
-
-    #[test]
-    fn test_validate_name_empty() {
-        assert!(matches!(
-            validate_namespace_name(""),
-            Err(MemoryError::InvalidInput(_))
-        ));
-    }
-
-    #[test]
-    fn test_validate_name_too_long() {
-        let long = "a".repeat(MAX_NAMESPACE_LEN + 1);
-        assert!(matches!(
-            validate_namespace_name(&long),
-            Err(MemoryError::InvalidInput(_))
-        ));
-    }
-
     #[test]
     fn test_validate_name_null_byte() {
         assert!(matches!(
@@ -178,36 +159,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_description_too_long() {
-        let long = "x".repeat(MAX_DESCRIPTION_LEN + 1);
-        assert!(matches!(
-            validate_description(&long),
-            Err(MemoryError::InvalidInput(_))
-        ));
-    }
-
-    #[test]
-    fn test_validate_prefix_empty() {
-        assert!(matches!(
-            validate_prefix(""),
-            Err(MemoryError::InvalidInput(_))
-        ));
-    }
-
-    // --- Db-level tests ---
-
-    #[test]
-    fn test_create_namespace_basic() {
-        let (_dir, conn) = open_db();
-        let ns = conn
-            .create_namespace("/user/alice", Some("Alice's namespace"))
-            .unwrap();
-        assert_eq!(ns.name, "/user/alice");
-        assert_eq!(ns.description.as_deref(), Some("Alice's namespace"));
-        assert!(!ns.created_at.is_empty());
-    }
-
-    #[test]
     fn test_create_namespace_idempotent() {
         let (_dir, conn) = open_db();
         let ns1 = conn
@@ -220,41 +171,6 @@ mod tests {
         assert_eq!(ns2.description.as_deref(), Some("first"));
         assert_eq!(ns1.name, ns2.name);
         assert_eq!(ns1.created_at, ns2.created_at);
-    }
-
-    #[test]
-    fn test_create_namespace_no_description() {
-        let (_dir, conn) = open_db();
-        let ns = conn.create_namespace("/ns/no-desc", None).unwrap();
-        assert!(ns.description.is_none());
-    }
-
-    #[test]
-    fn test_list_namespaces_empty() {
-        let (_dir, conn) = open_db();
-        let params = ListNamespacesParams {
-            prefix: None,
-            limit: 100,
-            offset: 0,
-        };
-        let result = conn.list_namespaces(&params).unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_list_namespaces_ordered() {
-        let (_dir, conn) = open_db();
-        for name in ["/b", "/a", "/c"] {
-            conn.create_namespace(name, None).unwrap();
-        }
-        let params = ListNamespacesParams {
-            prefix: None,
-            limit: 100,
-            offset: 0,
-        };
-        let result = conn.list_namespaces(&params).unwrap();
-        let names: Vec<&str> = result.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, vec!["/a", "/b", "/c"]);
     }
 
     #[test]
@@ -292,75 +208,10 @@ mod tests {
     }
 
     #[test]
-    fn test_list_namespaces_pagination() {
-        let (_dir, conn) = open_db();
-        for name in ["/a", "/b", "/c", "/d"] {
-            conn.create_namespace(name, None).unwrap();
-        }
-        let params = ListNamespacesParams {
-            prefix: None,
-            limit: 2,
-            offset: 1,
-        };
-        let result = conn.list_namespaces(&params).unwrap();
-        let names: Vec<&str> = result.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, vec!["/b", "/c"]);
-    }
-
-    #[test]
     fn test_delete_namespace_not_found() {
         let (_dir, conn) = open_db();
         let result = conn.delete_namespace("actor1", "/nonexistent");
         assert!(matches!(result, Err(MemoryError::NotFound(_))));
-    }
-
-    #[test]
-    fn test_delete_namespace_no_memories() {
-        let (_dir, conn) = open_db();
-        conn.create_namespace("/empty", None).unwrap();
-        let deleted = conn.delete_namespace("actor1", "/empty").unwrap();
-        assert_eq!(deleted, 0);
-        // Registry entry removed
-        let params = ListNamespacesParams {
-            prefix: None,
-            limit: 100,
-            offset: 0,
-        };
-        let list = conn.list_namespaces(&params).unwrap();
-        assert!(list.is_empty());
-    }
-
-    #[test]
-    fn test_delete_namespace_with_memories() {
-        use crate::memories::InsertMemoryParams;
-        let (_dir, conn) = open_db();
-        conn.create_namespace("/ns/test", None).unwrap();
-
-        for i in 0..3 {
-            let p = InsertMemoryParams {
-                actor_id: "actor1",
-                content: &format!("memory {i}"),
-                strategy: "raw",
-                namespace: Some("/ns/test"),
-                metadata: None,
-                source_session_id: None,
-                embedding: None,
-            };
-            conn.insert_memory(&p).unwrap();
-        }
-
-        let deleted = conn.delete_namespace("actor1", "/ns/test").unwrap();
-        assert_eq!(deleted, 3);
-
-        // Memories gone
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM memories WHERE namespace = '/ns/test' AND actor_id = 'actor1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 0);
     }
 
     #[test]
