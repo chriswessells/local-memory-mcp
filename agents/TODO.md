@@ -276,6 +276,70 @@
 - [ ] Ensure serde_json parse errors are never propagated as-is in session tool handlers (S4)
 - [ ] Document that session tool handlers log no user-supplied content (S5)
 
+### Agentic Coding Workflow — vendor-agnostic improvements
+
+See `design/DESIGN.md` § "Agentic Coding Workflow — Research" for full rationale, primitives, and sources. Goal: keep prompts as repo-visible, schema-bound, version-controlled artifacts that any harness (Claude Code, Kiro CLI, Cursor, Codex, Aider, Gemini CLI, etc.) can drive via shell scripts. Vendor dotfolders become thin adapters, not the source of truth.
+
+#### Tier 1 — Make agents executable (vendor-neutral)
+- [ ] Add `AGENTS.md` at repo root (entry point for Codex, Cursor, Aider, Kiro, Windsurf, Devin, Gemini CLI, etc.)
+- [ ] Symlink `CLAUDE.md` → `AGENTS.md` (Claude Code does not yet auto-load AGENTS.md)
+- [ ] Restructure `agents/` into `agents/personas/`, `agents/workflows/`, `agents/schemas/`
+- [ ] Add YAML frontmatter (`name`, `version`, `description`, `output_schema`) to each `agents/personas/*_review.md`
+- [ ] Define `agents/schemas/finding.schema.json` — JSON Schema for review findings (severity enum, location, finding, remediation, evidence)
+- [ ] Write `scripts/review.sh` — invoke one persona on one input, emit schema-conformant JSON; model selected via `LLM_MODEL` env var
+- [ ] Write `scripts/design-review.sh` — parallel fan-out of all 5 personas via `xargs -P5`, pipe through aggregator
+- [ ] Write `scripts/code-review.sh` — same, against a diff
+- [ ] Write `scripts/aggregate-findings.py` — dedupe, severity-normalize, suppress pre-existing-code findings (rules from `PERSONA_IMPROVEMENTS.md`)
+- [ ] Write `scripts/close-component.sh` — gate that requires TODO/TIME_LOG/ADR/LESSONS_LEARNED updates before marking a component done
+- [ ] Add `justfile` aliasing common tasks (`just review`, `just design-review`, `just code-review`, `just close component=…`, `just check`)
+- [ ] Write `scripts/render-adapters.sh` — generate `.claude/agents/`, `.cursor/rules/`, `.kiro/steering/` from canonical `agents/personas/*.md`; run via lefthook pre-commit
+
+#### Tier 2 — Security & supply chain
+- [ ] Add `deny.toml` + `cargo-deny check` step in CI (advisory + license + duplicate dep gates)
+- [ ] Add `.github/dependabot.yml` (or Renovate) for cargo + GitHub Actions ecosystems
+- [ ] Add `SECURITY.md` (disclosure policy, contact, scope, response SLA)
+- [ ] Add `.github/CODEOWNERS` — specifically protect `agents/personas/`, `scripts/`, `agents/schemas/`, `release.yml`
+- [ ] Add SLSA build provenance via `actions/attest-build-provenance` in `release.yml`
+- [ ] Add Sigstore `cosign` signing of release tarballs (keyless OIDC from workflow)
+- [ ] Add SBOM generation (`cargo-cyclonedx` or `anchore/syft`) as a release asset
+- [ ] Pin `install.sh` to a versioned release via `VERSION` env var (already in backlog under Component 11; consolidate)
+
+#### Tier 3 — Inner test/feedback loop
+- [ ] Adopt `cargo-nextest` for parallel test runs (faster local + CI feedback)
+- [ ] Add `cargo-llvm-cov` coverage with CI threshold; publish to Codecov or commit baseline
+- [ ] Add `proptest` property tests for FTS sanitizer, RRF determinism, actor-scoping invariants, NaN/Infinity validation
+- [ ] Add `cargo-fuzz` target for the FTS query sanitizer (run nightly via scheduled workflow)
+- [ ] Add `cargo-mutants` on critical modules (`db.rs`, `search.rs`, `memories.rs`)
+- [ ] Add `insta` snapshot tests for MCP tool response envelopes (regression-detect schema drift)
+- [ ] Add `cargo-machete` and `cargo-udeps` checks in CI (fail on unused deps)
+- [ ] Add `promptfoo.yaml` regression tests for each persona (assert on output schema + finding counts on fixtures)
+- [ ] Add `inspect/codeipi.eval.py` — UK AISI's CodeIPI eval to test prompt-injection resilience of personas
+- [ ] Add `inspect-ai` end-to-end agent eval that exercises `local-memory-mcp` through real agent loops in a Docker sandbox
+
+#### Tier 4 — Gates, state, hand-offs
+- [ ] Add `.github/workflows/agent-review.yml` — runs `scripts/code-review.sh` on every PR with `LLM_MODEL` from a workflow variable
+- [ ] Introduce `components.toml` typed state file (phase, gate_status, blockers, finding-file refs); replaces TODO.md phase tracking
+- [ ] Adopt conventional commits (`feat:`, `fix:`, `chore:`) + `git-cliff` for `CHANGELOG.md` generation
+- [ ] Add tag-vs-`Cargo.toml` version consistency check in `release.yml` (already in Component 10 backlog; consolidate)
+- [ ] Add `lefthook.yml` — cross-vendor git hooks (fmt, clippy, deny, gitleaks, nextest); replaces vendor-specific hook configs
+- [ ] Add `.github/PULL_REQUEST_TEMPLATE.md` with "personas reviewed" checkbox + link to `agents/WORKFLOW.md`
+- [ ] Add `.editorconfig` and `CONTRIBUTING.md` (point at WORKFLOW.md for the agentic flow)
+
+#### Tier 5 — Observability, scale, ops polish
+- [ ] Add OpenLLMetry / OpenInference instrumentation (OTLP export) for end-to-end traces covering agent harness + MCP server
+- [ ] Add MCP rate-limiting + per-tool request-size caps (token-bucket via `governor`; bound blob size, batch length, traversal depth)
+- [ ] Add cross-platform install.sh CI test job (Linux x86_64, Linux aarch64, macOS arm64, macOS x86_64) with `bats-core` + `shellcheck`
+- [ ] Add reliability test suite for SQLite failure modes (disk-full via tmpfs `--size`, corrupted page, SIGKILL during write)
+- [ ] Add `benches/` directory with `criterion` benchmarks (FTS query, vector KNN over N memories, RRF fusion, graph traversal at depth)
+
+#### Tier 6 — Frontier (optional, longer-horizon experiments)
+- [ ] Validator script: assert `src/<component>.rs` exposes exactly the design's declared API surface (executable spec compliance)
+- [ ] LLM-as-judge aggregator using `inspect-ai` primitives, replacing the prose dedupe rules in `PERSONA_IMPROVEMENTS.md`
+- [ ] Persona versioning + retroactive re-review (when `sec_review.md` v3→v4, query `components.toml` for components reviewed against v3 and re-run)
+- [ ] Sandboxed coding sub-agent runs via `inspect-ai`'s Docker/K8s sandbox primitives
+- [ ] Dogfood `local-memory-mcp` itself via `.mcp.json` (any vendor that supports MCP gets the agent's memory)
+- [ ] Autonomous scheduled review loop — GitHub Actions cron runs `scripts/code-review.sh` against `main`, opens issue on new findings
+
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)
 - [ ] Automatic extraction (on-device LLM)
