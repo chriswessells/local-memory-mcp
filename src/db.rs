@@ -388,10 +388,7 @@ pub trait Db {
     /// Fork a conversation by creating a branch from a specific event.
     /// Precondition: params must be pre-validated. root_event_id must exist in events for actor_id.
     /// If parent_branch_id provided, it must exist with matching session_id.
-    fn create_branch(
-        &self,
-        params: &InsertBranchParams<'_>,
-    ) -> Result<Branch, MemoryError>;
+    fn create_branch(&self, params: &InsertBranchParams<'_>) -> Result<Branch, MemoryError>;
 
     /// List checkpoints for a session, scoped to actor. Ordered by created_at ASC, id ASC.
     fn list_checkpoints(
@@ -400,10 +397,7 @@ pub trait Db {
     ) -> Result<Vec<Checkpoint>, MemoryError>;
 
     /// List branches for a session, scoped to actor via root_event_id JOIN. Ordered by created_at ASC, id ASC.
-    fn list_branches(
-        &self,
-        params: &ListBranchesParams<'_>,
-    ) -> Result<Vec<Branch>, MemoryError>;
+    fn list_branches(&self, params: &ListBranchesParams<'_>) -> Result<Vec<Branch>, MemoryError>;
 
     // -- Namespaces (Component 8) --
 
@@ -1704,19 +1698,18 @@ impl Db for Connection {
     }
 
     fn delete_namespace(&self, actor_id: &str, name: &str) -> Result<u64, MemoryError> {
-        let exists: bool = match self.query_row(
-            "SELECT 1 FROM namespaces WHERE name = ?1",
-            [name],
-            |_| Ok(true),
-        ) {
-            Ok(v) => v,
-            Err(rusqlite::Error::QueryReturnedNoRows) => false,
-            Err(e) => {
-                return Err(MemoryError::QueryFailed(format!(
-                    "delete_namespace existence check failed: {e}"
-                )))
-            }
-        };
+        let exists: bool =
+            match self.query_row("SELECT 1 FROM namespaces WHERE name = ?1", [name], |_| {
+                Ok(true)
+            }) {
+                Ok(v) => v,
+                Err(rusqlite::Error::QueryReturnedNoRows) => false,
+                Err(e) => {
+                    return Err(MemoryError::QueryFailed(format!(
+                        "delete_namespace existence check failed: {e}"
+                    )))
+                }
+            };
 
         if !exists {
             return Err(MemoryError::NotFound(name.to_string()));
@@ -1747,13 +1740,9 @@ impl Db for Connection {
             })?;
 
             let mut stmt = tx
-                .prepare(
-                    "SELECT id FROM memories WHERE namespace = ?1 AND actor_id = ?2 LIMIT ?3",
-                )
+                .prepare("SELECT id FROM memories WHERE namespace = ?1 AND actor_id = ?2 LIMIT ?3")
                 .map_err(|e| {
-                    MemoryError::QueryFailed(format!(
-                        "delete_namespace prepare chunk failed: {e}"
-                    ))
+                    MemoryError::QueryFailed(format!("delete_namespace prepare chunk failed: {e}"))
                 })?;
             let ids: Vec<String> = stmt
                 .query_map(
@@ -1761,23 +1750,17 @@ impl Db for Connection {
                     |r| r.get(0),
                 )
                 .map_err(|e| {
-                    MemoryError::QueryFailed(format!(
-                        "delete_namespace query chunk failed: {e}"
-                    ))
+                    MemoryError::QueryFailed(format!("delete_namespace query chunk failed: {e}"))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(|e| {
-                    MemoryError::QueryFailed(format!(
-                        "delete_namespace collect chunk failed: {e}"
-                    ))
+                    MemoryError::QueryFailed(format!("delete_namespace collect chunk failed: {e}"))
                 })?;
             drop(stmt);
 
             if ids.is_empty() {
                 tx.commit().map_err(|e| {
-                    MemoryError::QueryFailed(format!(
-                        "delete_namespace final commit failed: {e}"
-                    ))
+                    MemoryError::QueryFailed(format!("delete_namespace final commit failed: {e}"))
                 })?;
                 break;
             }
@@ -1792,24 +1775,23 @@ impl Db for Connection {
             // Delete memory_vec rows first so that on retry, vec orphans are re-collected
             // and re-attempted cleanly if the memories delete failed mid-way.
             let vec_sql = format!("DELETE FROM memory_vec WHERE memory_id IN ({placeholders})");
-            let params: Vec<&dyn rusqlite::types::ToSql> =
-                ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+            let params: Vec<&dyn rusqlite::types::ToSql> = ids
+                .iter()
+                .map(|id| id as &dyn rusqlite::types::ToSql)
+                .collect();
             tx.execute(&vec_sql, params.as_slice()).map_err(|e| {
-                MemoryError::QueryFailed(format!(
-                    "delete_namespace memory_vec delete failed: {e}"
-                ))
+                MemoryError::QueryFailed(format!("delete_namespace memory_vec delete failed: {e}"))
             })?;
 
             // Delete memories — FTS5 delete triggers fire per row (keeps memory_fts in sync).
             // knowledge_edges cascade via ON DELETE CASCADE FK.
-            let mem_sql =
-                format!("DELETE FROM memories WHERE id IN ({placeholders})");
-            let params: Vec<&dyn rusqlite::types::ToSql> =
-                ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+            let mem_sql = format!("DELETE FROM memories WHERE id IN ({placeholders})");
+            let params: Vec<&dyn rusqlite::types::ToSql> = ids
+                .iter()
+                .map(|id| id as &dyn rusqlite::types::ToSql)
+                .collect();
             let deleted = tx.execute(&mem_sql, params.as_slice()).map_err(|e| {
-                MemoryError::QueryFailed(format!(
-                    "delete_namespace memories delete failed: {e}"
-                ))
+                MemoryError::QueryFailed(format!("delete_namespace memories delete failed: {e}"))
             })? as u64;
 
             total_deleted += deleted;
@@ -1823,9 +1805,7 @@ impl Db for Connection {
         // path continue to exist — they are just in an unregistered namespace.
         self.execute("DELETE FROM namespaces WHERE name = ?1", [name])
             .map_err(|e| {
-                MemoryError::QueryFailed(format!(
-                    "delete_namespace registry delete failed: {e}"
-                ))
+                MemoryError::QueryFailed(format!("delete_namespace registry delete failed: {e}"))
             })?;
 
         tracing::info!(
@@ -1914,10 +1894,7 @@ impl Db for Connection {
         Ok(cp)
     }
 
-    fn create_branch(
-        &self,
-        params: &InsertBranchParams<'_>,
-    ) -> Result<Branch, MemoryError> {
+    fn create_branch(&self, params: &InsertBranchParams<'_>) -> Result<Branch, MemoryError> {
         let id = uuid::Uuid::new_v4().to_string();
 
         let tx = self.unchecked_transaction().map_err(|e| {
@@ -2019,7 +1996,12 @@ impl Db for Connection {
 
         let rows = stmt
             .query_map(
-                rusqlite::params![params.actor_id, params.session_id, params.limit, params.offset],
+                rusqlite::params![
+                    params.actor_id,
+                    params.session_id,
+                    params.limit,
+                    params.offset
+                ],
                 |row| {
                     Ok(Checkpoint {
                         id: row.get(0)?,
@@ -2047,10 +2029,7 @@ impl Db for Connection {
         Ok(checkpoints)
     }
 
-    fn list_branches(
-        &self,
-        params: &ListBranchesParams<'_>,
-    ) -> Result<Vec<Branch>, MemoryError> {
+    fn list_branches(&self, params: &ListBranchesParams<'_>) -> Result<Vec<Branch>, MemoryError> {
         let mut stmt = self
             .prepare(
                 "SELECT b.id, b.session_id, b.name, b.parent_branch_id, b.root_event_id, b.created_at
@@ -2067,7 +2046,12 @@ impl Db for Connection {
 
         let rows = stmt
             .query_map(
-                rusqlite::params![params.actor_id, params.session_id, params.limit, params.offset],
+                rusqlite::params![
+                    params.actor_id,
+                    params.session_id,
+                    params.limit,
+                    params.offset
+                ],
                 |row| {
                     Ok(Branch {
                         id: row.get(0)?,

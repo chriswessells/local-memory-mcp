@@ -939,8 +939,7 @@ impl MemoryServer {
                 event_id: &params.event_id,
                 metadata: params.metadata.as_deref(),
             };
-            sessions::create_checkpoint(db, &p)
-                .map(|cp| serde_json::json!({ "checkpoint": cp }))
+            sessions::create_checkpoint(db, &p).map(|cp| serde_json::json!({ "checkpoint": cp }))
         })
         .await
     }
@@ -965,8 +964,7 @@ impl MemoryServer {
                 name: params.name.as_deref(),
                 parent_branch_id: params.parent_branch_id.as_deref(),
             };
-            sessions::create_branch(db, &p)
-                .map(|br| serde_json::json!({ "branch": br }))
+            sessions::create_branch(db, &p).map(|br| serde_json::json!({ "branch": br }))
         })
         .await
     }
@@ -988,8 +986,7 @@ impl MemoryServer {
                 limit: params.limit.unwrap_or(sessions::DEFAULT_CHECKPOINT_LIMIT),
                 offset: params.offset.unwrap_or(0),
             };
-            sessions::list_checkpoints(db, &p)
-                .map(|cps| serde_json::json!({ "checkpoints": cps }))
+            sessions::list_checkpoints(db, &p).map(|cps| serde_json::json!({ "checkpoints": cps }))
         })
         .await
     }
@@ -1012,8 +1009,7 @@ impl MemoryServer {
                 limit: params.limit.unwrap_or(sessions::DEFAULT_CHECKPOINT_LIMIT),
                 offset: params.offset.unwrap_or(0),
             };
-            sessions::list_branches(db, &p)
-                .map(|brs| serde_json::json!({ "branches": brs }))
+            sessions::list_branches(db, &p).map(|brs| serde_json::json!({ "branches": brs }))
         })
         .await
     }
@@ -1227,8 +1223,7 @@ mod tests {
                     name: None,
                     parent_branch_id: None,
                 };
-                sessions::create_branch(db, &p)
-                    .map(|br| serde_json::json!({ "branch": br }))
+                sessions::create_branch(db, &p).map(|br| serde_json::json!({ "branch": br }))
             })
             .await;
         assert!(result.is_ok(), "unexpected error: {:?}", result);
@@ -1269,8 +1264,7 @@ mod tests {
                     limit: 100,
                     offset: 0,
                 };
-                sessions::list_branches(db, &p)
-                    .map(|brs| serde_json::json!({ "branches": brs }))
+                sessions::list_branches(db, &p).map(|brs| serde_json::json!({ "branches": brs }))
             })
             .await;
         assert!(result.is_ok());
