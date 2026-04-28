@@ -158,10 +158,7 @@ pub fn create_checkpoint(
 }
 
 /// Fork a conversation by creating a branch from a specific event.
-pub fn create_branch(
-    db: &dyn Db,
-    params: &InsertBranchParams<'_>,
-) -> Result<Branch, MemoryError> {
+pub fn create_branch(db: &dyn Db, params: &InsertBranchParams<'_>) -> Result<Branch, MemoryError> {
     validate_branch_params(params)?;
     db.create_branch(params)
 }

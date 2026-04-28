@@ -143,7 +143,10 @@ mod tests {
         for ch in ['\n', '\t', '\x1b'] {
             let s = format!("foo{ch}bar");
             assert!(
-                matches!(validate_namespace_name(&s), Err(MemoryError::InvalidInput(_))),
+                matches!(
+                    validate_namespace_name(&s),
+                    Err(MemoryError::InvalidInput(_))
+                ),
                 "expected error for control char {:?}",
                 ch
             );
@@ -161,9 +164,7 @@ mod tests {
     #[test]
     fn test_create_namespace_idempotent() {
         let (_dir, conn) = open_db();
-        let ns1 = conn
-            .create_namespace("/user/alice", Some("first"))
-            .unwrap();
+        let ns1 = conn.create_namespace("/user/alice", Some("first")).unwrap();
         let ns2 = conn
             .create_namespace("/user/alice", Some("second"))
             .unwrap();
