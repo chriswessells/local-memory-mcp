@@ -53,7 +53,7 @@
 ## Planned — Implementation (per-component, each goes through full workflow)
 
 - [ ] Component 6: Session tools (checkpoints, branches) — design, review, code, review
-- [x] Component 8: Namespace tools — design (2 review rounds, 1 Critical + 4 High resolved), code (22 tests), merged
+- [x] Component 8: Namespace tools — design (2 review rounds, 1 Critical + 4 High resolved), code (11 tests, pruned to High/Critical paths only), merged
 - [ ] Component 9: MCP server — ✅ done (moved to Completed)
 - [x] Component 10: CI/CD — design (2 Critical + 6 High resolved in design review), code (ci.yml + release.yml), code review (3 High fixed: release atomicity, artifact verification, per-job permissions), merged
 - [x] Component 11: Installers — design (1 Critical + 7 High resolved in design review), code (install.sh), code review (3 High fixed: wget TLS, tar path restriction), merged
