@@ -22,9 +22,10 @@ main() {
     Linux-x86_64)   TARGET="x86_64-unknown-linux-gnu" ;;
     Linux-aarch64)   TARGET="aarch64-unknown-linux-gnu" ;;
     Darwin-arm64)    TARGET="aarch64-apple-darwin" ;;
+    Darwin-x86_64)  TARGET="x86_64-apple-darwin" ;;
     *)
       echo "error: unsupported platform: ${OS}-${ARCH}"
-      echo "Supported: Linux x86_64, Linux aarch64, macOS arm64"
+      echo "Supported: Linux x86_64, Linux aarch64, macOS arm64, macOS x86_64"
       echo "Build from source: cargo install --path ."
       exit 1
       ;;
