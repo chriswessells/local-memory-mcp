@@ -90,8 +90,7 @@ fn validate_insert_memory_params(params: &InsertMemoryParams<'_>) -> Result<(), 
     validate_max_len(params.strategy, MAX_STRATEGY_LEN, "strategy")?;
 
     if let Some(ns) = params.namespace {
-        validate_non_empty(ns, "namespace")?;
-        validate_max_len(ns, MAX_NAMESPACE_LEN, "namespace")?;
+        crate::namespaces::validate_namespace_name(ns)?;
     }
     if let Some(metadata) = params.metadata {
         validate_max_len(metadata, MAX_METADATA_SIZE, "metadata")?;

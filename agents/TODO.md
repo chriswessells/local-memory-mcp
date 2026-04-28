@@ -23,6 +23,8 @@
 
 - [x] Component 5: Knowledge graph — design (1 Critical + 2 High resolved), code (26 tests), code review (1 Critical + 1 High fixed), merged
 
+- [x] Component 7: Store management tools — implemented as part of Component 9 MCP server (switch_store, current_store, list_stores, delete_store in tools.rs; StoreManager in store.rs), no separate design/review cycle needed
+
 ## In Progress
 
 - [ ] Component 12: Integration & E2E tests — design (2 review rounds, 2 Critical + 11 High resolved), artifact review complete
@@ -40,7 +42,7 @@
     - [x] test_e2e_mcp_lifecycle
     - [x] test_e2e_stderr_logging
   - [x] Task 4: Final verification (cargo test + cargo clippy)
-  - [ ] Additional tests for Components 6, 7, 8 (when implemented)
+  - [ ] Additional tests for Components 6, 8 (when implemented)
 
 - [x] Bug fix: Graceful shutdown — signal handler to cleanly close SQLite before exit (design: `design/graceful-shutdown.md`)
   - [x] Research root cause (POSIX locks released by OS on death; real issue is missing WAL checkpoint/optimize)
@@ -51,8 +53,7 @@
 ## Planned — Implementation (per-component, each goes through full workflow)
 
 - [ ] Component 6: Session tools (checkpoints, branches) — design, review, code, review
-- [ ] Component 7: Store management tools — design, review, code, review
-- [ ] Component 8: Namespace tools — design, review, code, review
+- [x] Component 8: Namespace tools — design (2 review rounds, 1 Critical + 4 High resolved), code (22 tests), merged
 - [ ] Component 9: MCP server — ✅ done (moved to Completed)
 - [x] Component 10: CI/CD — design (2 Critical + 6 High resolved in design review), code (ci.yml + release.yml), code review (3 High fixed: release atomicity, artifact verification, per-job permissions), merged
 - [x] Component 11: Installers — design (1 Critical + 7 High resolved in design review), code (install.sh), code review (3 High fixed: wget TLS, tar path restriction), merged

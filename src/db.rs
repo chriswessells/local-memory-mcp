@@ -5,6 +5,7 @@ use crate::graph::{
     TraversalNode, UpdateEdgeParams,
 };
 use crate::memories::{ConsolidateAction, InsertMemoryParams, ListMemoriesParams, Memory};
+use crate::namespaces::{ListNamespacesParams, Namespace, NAMESPACE_DELETE_CHUNK_SIZE};
 use crate::search::{SearchFtsParams, SearchVectorParams};
 use rusqlite::Connection;
 use std::path::Path;
@@ -376,10 +377,27 @@ pub trait Db {
     // fn list_checkpoints(session_id: &str) -> Result<Vec<Checkpoint>, MemoryError>;
     // fn list_branches(session_id: &str) -> Result<Vec<Branch>, MemoryError>;
 
-    // -- Namespaces (Component 7) --
-    // fn create_namespace(name: &str, description: Option<&str>) -> Result<(), MemoryError>;
-    // fn list_namespaces(prefix: Option<&str>) -> Result<Vec<Namespace>, MemoryError>;
-    // fn delete_namespace(name: &str) -> Result<u64, MemoryError>; // returns count of deleted memories
+    // -- Namespaces (Component 8) --
+
+    /// Insert a namespace. Idempotent: ON CONFLICT(name) DO NOTHING, then SELECT.
+    /// Description is NOT updated if namespace already exists.
+    fn create_namespace(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<Namespace, MemoryError>;
+
+    /// List registered namespaces. Optional LIKE prefix filter (wildcards escaped).
+    /// Ordered by name ASC. Limit/offset for pagination.
+    fn list_namespaces(
+        &self,
+        params: &ListNamespacesParams<'_>,
+    ) -> Result<Vec<Namespace>, MemoryError>;
+
+    /// Delete memories for actor_id in the named namespace (chunked), clean up memory_vec,
+    /// and remove the namespace registry entry.
+    /// Returns count of memories deleted. Returns NotFound if namespace not registered.
+    fn delete_namespace(&self, actor_id: &str, name: &str) -> Result<u64, MemoryError>;
 }
 
 fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
@@ -411,6 +429,14 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
         superseded_by: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+    })
+}
+
+fn row_to_namespace(row: &rusqlite::Row<'_>) -> rusqlite::Result<Namespace> {
+    Ok(Namespace {
+        name: row.get(0)?,
+        description: row.get(1)?,
+        created_at: row.get(2)?,
     })
 }
 
@@ -1566,6 +1592,221 @@ impl Db for Connection {
             labels,
             most_connected,
         })
+    }
+
+    fn create_namespace(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<Namespace, MemoryError> {
+        self.execute(
+            "INSERT INTO namespaces(name, description) VALUES(?1, ?2) ON CONFLICT(name) DO NOTHING",
+            rusqlite::params![name, description],
+        )
+        .map_err(|e| {
+            tracing::error!("create_namespace insert failed: {e}");
+            MemoryError::QueryFailed("failed to create namespace".into())
+        })?;
+
+        self.query_row(
+            "SELECT name, description, created_at FROM namespaces WHERE name = ?1",
+            [name],
+            row_to_namespace,
+        )
+        .map_err(|e| {
+            tracing::error!("create_namespace select failed: {e}");
+            MemoryError::QueryFailed("failed to retrieve namespace after insert".into())
+        })
+    }
+
+    fn list_namespaces(
+        &self,
+        params: &ListNamespacesParams<'_>,
+    ) -> Result<Vec<Namespace>, MemoryError> {
+        let mut stmt;
+        let rows: Vec<Namespace>;
+
+        if let Some(prefix) = params.prefix {
+            let pattern = format!("{}%", escape_like(prefix));
+            stmt = self
+                .prepare(
+                    "SELECT name, description, created_at FROM namespaces \
+                     WHERE name LIKE ?1 ESCAPE '\\' \
+                     ORDER BY name ASC LIMIT ?2 OFFSET ?3",
+                )
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!("list_namespaces prepare failed: {e}"))
+                })?;
+            rows = stmt
+                .query_map(
+                    rusqlite::params![pattern, params.limit, params.offset],
+                    row_to_namespace,
+                )
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!("list_namespaces query failed: {e}"))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!("list_namespaces row failed: {e}"))
+                })?;
+        } else {
+            stmt = self
+                .prepare(
+                    "SELECT name, description, created_at FROM namespaces \
+                     ORDER BY name ASC LIMIT ?1 OFFSET ?2",
+                )
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!("list_namespaces prepare failed: {e}"))
+                })?;
+            rows = stmt
+                .query_map(
+                    rusqlite::params![params.limit, params.offset],
+                    row_to_namespace,
+                )
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!("list_namespaces query failed: {e}"))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!("list_namespaces row failed: {e}"))
+                })?;
+        }
+
+        Ok(rows)
+    }
+
+    fn delete_namespace(&self, actor_id: &str, name: &str) -> Result<u64, MemoryError> {
+        let exists: bool = match self.query_row(
+            "SELECT 1 FROM namespaces WHERE name = ?1",
+            [name],
+            |_| Ok(true),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => false,
+            Err(e) => {
+                return Err(MemoryError::QueryFailed(format!(
+                    "delete_namespace existence check failed: {e}"
+                )))
+            }
+        };
+
+        if !exists {
+            return Err(MemoryError::NotFound(name.to_string()));
+        }
+
+        let approx_count: u64 = self
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND actor_id = ?2",
+                rusqlite::params![name, actor_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        tracing::warn!(
+            namespace = name,
+            actor_id,
+            memories = approx_count,
+            "deleting namespace"
+        );
+
+        let mut total_deleted: u64 = 0;
+
+        // Chunk the delete to avoid holding the EXCLUSIVE lock too long.
+        // SAFETY: unchecked_transaction is safe here — locking_mode = EXCLUSIVE means
+        // no concurrent writers, and this fn runs inside spawn_blocking under Mutex<StoreManager>.
+        loop {
+            let tx = self.unchecked_transaction().map_err(|e| {
+                MemoryError::QueryFailed(format!("delete_namespace begin tx failed: {e}"))
+            })?;
+
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id FROM memories WHERE namespace = ?1 AND actor_id = ?2 LIMIT ?3",
+                )
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!(
+                        "delete_namespace prepare chunk failed: {e}"
+                    ))
+                })?;
+            let ids: Vec<String> = stmt
+                .query_map(
+                    rusqlite::params![name, actor_id, NAMESPACE_DELETE_CHUNK_SIZE],
+                    |r| r.get(0),
+                )
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!(
+                        "delete_namespace query chunk failed: {e}"
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|e| {
+                    MemoryError::QueryFailed(format!(
+                        "delete_namespace collect chunk failed: {e}"
+                    ))
+                })?;
+            drop(stmt);
+
+            if ids.is_empty() {
+                tx.commit().map_err(|e| {
+                    MemoryError::QueryFailed(format!(
+                        "delete_namespace final commit failed: {e}"
+                    ))
+                })?;
+                break;
+            }
+
+            let placeholders: String = ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            // Delete memory_vec rows first so that on retry, vec orphans are re-collected
+            // and re-attempted cleanly if the memories delete failed mid-way.
+            let vec_sql = format!("DELETE FROM memory_vec WHERE memory_id IN ({placeholders})");
+            let params: Vec<&dyn rusqlite::types::ToSql> =
+                ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+            tx.execute(&vec_sql, params.as_slice()).map_err(|e| {
+                MemoryError::QueryFailed(format!(
+                    "delete_namespace memory_vec delete failed: {e}"
+                ))
+            })?;
+
+            // Delete memories — FTS5 delete triggers fire per row (keeps memory_fts in sync).
+            // knowledge_edges cascade via ON DELETE CASCADE FK.
+            let mem_sql =
+                format!("DELETE FROM memories WHERE id IN ({placeholders})");
+            let params: Vec<&dyn rusqlite::types::ToSql> =
+                ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+            let deleted = tx.execute(&mem_sql, params.as_slice()).map_err(|e| {
+                MemoryError::QueryFailed(format!(
+                    "delete_namespace memories delete failed: {e}"
+                ))
+            })? as u64;
+
+            total_deleted += deleted;
+
+            tx.commit().map_err(|e| {
+                MemoryError::QueryFailed(format!("delete_namespace chunk commit failed: {e}"))
+            })?;
+        }
+
+        // Remove the namespace registry entry. Other actors' memories in this namespace
+        // path continue to exist — they are just in an unregistered namespace.
+        self.execute("DELETE FROM namespaces WHERE name = ?1", [name])
+            .map_err(|e| {
+                MemoryError::QueryFailed(format!(
+                    "delete_namespace registry delete failed: {e}"
+                ))
+            })?;
+
+        tracing::info!(
+            namespace = name,
+            actor_id,
+            memories_deleted = total_deleted,
+            "namespace deleted"
+        );
+        Ok(total_deleted)
     }
 }
 

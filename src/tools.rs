@@ -6,12 +6,13 @@ use rmcp::{schemars, tool, tool_router};
 use serde::Deserialize;
 
 use crate::error::MemoryError;
-use crate::events::{self, BranchFilter, Event, InsertEventParams};
+use crate::events::{self, BranchFilter, Event, InsertEventParams, DEFAULT_PAGE_LIMIT};
 use crate::graph::{
     self, Direction, InsertEdgeParams as GraphInsertEdgeParams,
     UpdateEdgeParams as GraphUpdateEdgeParams,
 };
 use crate::memories::{self, ConsolidateAction, InsertMemoryParams, ListMemoriesParams};
+use crate::namespaces;
 use crate::search::{self, RecallParams};
 use crate::store::StoreManager;
 
@@ -301,6 +302,34 @@ pub struct ListLabelsParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GraphStatsParams {
     actor_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CreateNamespaceToolParams {
+    /// Namespace path, e.g. "/user/alice/preferences". Up to 512 bytes (UTF-8).
+    /// Must not contain control characters.
+    #[schemars(length(max = 512))]
+    name: String,
+    #[serde(default)]
+    #[schemars(length(max = 1024))]
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListNamespacesToolParams {
+    /// If provided, return only namespaces whose name starts with this prefix.
+    #[serde(default)]
+    prefix: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DeleteNamespaceToolParams {
+    actor_id: String,
+    name: String,
 }
 
 // --- Helpers ---
@@ -649,6 +678,66 @@ impl MemoryServer {
         .await
     }
 
+    // -- Namespace tools (Component 8) --
+
+    #[tool(
+        name = "memory.create_namespace",
+        description = "Register a namespace with optional description. Idempotent — if the namespace already exists, returns the existing entry unchanged. Namespace names are UTF-8 strings up to 512 bytes (e.g., '/user/alice/preferences'). Must not contain control characters."
+    )]
+    pub async fn create_namespace(
+        &self,
+        Parameters(params): Parameters<CreateNamespaceToolParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let p = namespaces::CreateNamespaceParams {
+                name: &params.name,
+                description: params.description.as_deref(),
+            };
+            let ns = namespaces::create_namespace(db, &p)?;
+            Ok(serde_json::json!({ "namespace": ns }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "memory.list_namespaces",
+        description = "List registered namespaces ordered alphabetically. Only namespaces explicitly created via memory.create_namespace are returned — not all namespaces referenced by memories. Supports optional prefix filter and limit/offset pagination."
+    )]
+    pub async fn list_namespaces(
+        &self,
+        Parameters(params): Parameters<ListNamespacesToolParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let p = namespaces::ListNamespacesParams {
+                prefix: params.prefix.as_deref(),
+                limit: params.limit.unwrap_or(DEFAULT_PAGE_LIMIT),
+                offset: params.offset.unwrap_or(0),
+            };
+            let list = namespaces::list_namespaces(db, &p)?;
+            Ok(serde_json::json!({ "namespaces": list }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "memory.delete_namespace",
+        description = "Delete all memories belonging to actor_id in the named namespace, clean up their vector rows, and remove the namespace registry entry. Scoped to actor_id — other actors' memories in the same namespace path are not affected. Deletes in chunks of 500 to avoid blocking the server. Returns not_found if the namespace is not registered."
+    )]
+    pub async fn delete_namespace(
+        &self,
+        Parameters(params): Parameters<DeleteNamespaceToolParams>,
+    ) -> Result<String, String> {
+        self.run(move |mgr| {
+            let db = mgr.db()?;
+            let memories_deleted =
+                namespaces::delete_namespace(db, &params.actor_id, &params.name)?;
+            Ok(serde_json::json!({ "deleted": true, "memories_deleted": memories_deleted }))
+        })
+        .await
+    }
+
     // -- Graph tools (Component 5) --
 
     #[tool(
@@ -855,5 +944,72 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("not_found"));
+    }
+
+    fn make_server() -> MemoryServer {
+        let dir = TempDir::new().unwrap();
+        let mut mgr = StoreManager::with_base_dir(dir.path().to_path_buf()).unwrap();
+        mgr.open_default().unwrap();
+        // Keep dir alive by leaking — acceptable in tests
+        std::mem::forget(dir);
+        MemoryServer::new(Arc::new(Mutex::new(mgr)))
+    }
+
+    #[tokio::test]
+    async fn test_tool_create_namespace() {
+        let server = make_server();
+        let params = CreateNamespaceToolParams {
+            name: "/user/test".into(),
+            description: Some("test namespace".into()),
+        };
+        let result = server
+            .run(move |mgr| {
+                let db = mgr.db()?;
+                let p = namespaces::CreateNamespaceParams {
+                    name: &params.name,
+                    description: params.description.as_deref(),
+                };
+                let ns = namespaces::create_namespace(db, &p)?;
+                Ok(serde_json::json!({ "namespace": ns }))
+            })
+            .await;
+        assert!(result.is_ok());
+        let v: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(v["namespace"]["name"], "/user/test");
+        assert_eq!(v["namespace"]["description"], "test namespace");
+    }
+
+    #[tokio::test]
+    async fn test_tool_list_namespaces_empty() {
+        let server = make_server();
+        let result = server
+            .run(move |mgr| {
+                let db = mgr.db()?;
+                let p = namespaces::ListNamespacesParams {
+                    prefix: None,
+                    limit: 100,
+                    offset: 0,
+                };
+                let list = namespaces::list_namespaces(db, &p)?;
+                Ok(serde_json::json!({ "namespaces": list }))
+            })
+            .await;
+        assert!(result.is_ok());
+        let v: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(v["namespaces"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_tool_delete_namespace_not_found() {
+        let server = make_server();
+        let result = server
+            .run(move |mgr| {
+                let db = mgr.db()?;
+                namespaces::delete_namespace(db, "actor1", "/nonexistent")
+                    .map(|n| serde_json::json!({ "deleted": true, "memories_deleted": n }))
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not_found"));
     }
 }

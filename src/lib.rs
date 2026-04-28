@@ -3,6 +3,7 @@ pub mod error;
 pub mod events;
 pub mod graph;
 pub mod memories;
+pub mod namespaces;
 pub mod search;
 pub mod store;
 pub mod tools;
