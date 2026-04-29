@@ -2,30 +2,29 @@
 set -euo pipefail
 # Requires bash — do not change shebang to /bin/sh
 
+REPO="chriswessells/local-memory-mcp"
+BINARY="local-memory-mcp"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+WORK_DIR=""
+
+cleanup() {
+  [ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"
+  rm -f "$INSTALL_DIR/.$BINARY.tmp"
+}
+trap cleanup EXIT INT TERM
+
 main() {
-  local REPO="chriswessells/local-memory-mcp"
-  local BINARY="local-memory-mcp"
-  local INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-  local WORK_DIR=""
-
-  cleanup() {
-    [ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"
-    rm -f "$INSTALL_DIR/.$BINARY.tmp"
-  }
-  trap cleanup EXIT INT TERM
-
   # Platform detection
   local OS ARCH TARGET
   OS=$(uname -s)
   ARCH=$(uname -m)
   case "${OS}-${ARCH}" in
-    Linux-x86_64)   TARGET="x86_64-unknown-linux-gnu" ;;
+    Linux-x86_64)    TARGET="x86_64-unknown-linux-gnu" ;;
     Linux-aarch64)   TARGET="aarch64-unknown-linux-gnu" ;;
     Darwin-arm64)    TARGET="aarch64-apple-darwin" ;;
-    Darwin-x86_64)  TARGET="x86_64-apple-darwin" ;;
     *)
       echo "error: unsupported platform: ${OS}-${ARCH}"
-      echo "Supported: Linux x86_64, Linux aarch64, macOS arm64, macOS x86_64"
+      echo "Supported: Linux x86_64, Linux aarch64, macOS arm64"
       echo "Build from source: cargo install --path ."
       exit 1
       ;;
