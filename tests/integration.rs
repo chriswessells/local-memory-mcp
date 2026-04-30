@@ -667,9 +667,7 @@ async fn test_namespace_lifecycle() {
     // list_namespaces — both present
     let list = parse_ok(
         server
-            .list_namespaces(Parameters(
-                serde_json::from_value(json!({})).unwrap(),
-            ))
+            .list_namespaces(Parameters(serde_json::from_value(json!({})).unwrap()))
             .await,
     );
     assert_eq!(list["namespaces"].as_array().unwrap().len(), 2);
@@ -717,9 +715,7 @@ async fn test_namespace_lifecycle() {
     // list_namespaces — one remains
     let list2 = parse_ok(
         server
-            .list_namespaces(Parameters(
-                serde_json::from_value(json!({})).unwrap(),
-            ))
+            .list_namespaces(Parameters(serde_json::from_value(json!({})).unwrap()))
             .await,
     );
     assert_eq!(list2["namespaces"].as_array().unwrap().len(), 1);
