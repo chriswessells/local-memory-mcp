@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.3.0] — Unreleased
+
+### Breaking changes
+
+- **`metadata` and `properties` wire format** (`memory.create_event`,
+  `memory.create_memory_record`, `memory.create_checkpoint`,
+  `graph.create_edge`, `graph.update_edge`): these fields now accept a
+  JSON **object** directly instead of a JSON-encoded string.
+  - Before: `"metadata": "{\"source\":\"user\"}"`
+  - After:  `"metadata": {"source": "user"}`
+  - Callers that pass `null` or omit these fields are unaffected.
+  - Existing stores are fully compatible — v0.2 data reads correctly in v0.3.
+
+### New validation rules
+
+- `metadata` and `properties` objects are now limited to 50 keys and
+  nesting depth 5.
+
+---
+
 ## v0.2.0 — Breaking changes
 
 All 29 tool names have been realigned with AWS Bedrock AgentCore Memory naming

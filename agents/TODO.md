@@ -341,7 +341,7 @@ See `design/DESIGN.md` § "Agentic Coding Workflow — Research" for full ration
 - [ ] Dogfood `local-memory-mcp` itself via `.mcp.json` (any vendor that supports MCP gets the agent's memory)
 - [ ] Autonomous scheduled review loop — GitHub Actions cron runs `scripts/code-review.sh` against `main`, opens issue on new findings
 
-### LLM Harness Discoverability
+### MCP Discoverability
 
 See `design/llm-discoverability.md` for full audit, findings (F1–F6),
 and rationale. Goal: make it easier for LLM harnesses (Claude Code,
@@ -403,30 +403,32 @@ AgentCore-aligned rename. Canonical mapping is in
 - [x] InteropReview High: `SwitchStoreParams.name` + `DeleteStoreParams.name` missing schemars — added
 - [x] SecReview/RelReview Medium: CHANGELOG missing `query` → `search_query` field rename row — added, with supplemental grep note
 
-##### Other Tier-2 items (independent of the rename)
-- [ ] R7: Change `metadata` and graph `properties` from `Option<String>` to `Option<serde_json::Value>` so the JSON Schema reflects the actual object shape
+#### Remaining items
+
+- [x] R7: Change `metadata` and graph `properties` from `Option<String>` to `Option<serde_json::Value>` so the JSON Schema reflects the actual object shape
 - [ ] R8: Optional — replace dots with underscores in tool names (`memory_create_event`, `graph_traverse`) for cross-host portability; if keeping dots, document host-compatibility requirement in README
 
-### From LLM discoverability Tier 2 code review (Medium/Low)
-- [ ] CHANGELOG migration grep: scoped note for `"query"` and `"limit"` only applies to `memory.retrieve_memory_records`; other tools keep `limit` (SecReview Medium)
-- [ ] InteropReview: `graph.traverse` lacks a noun — `namespace.verb` rather than `namespace.verb_noun` convention; acceptable but undocumented (InteropReview Medium)
-- [ ] InteropReview: `graph.get_stats` annotation title is "Graph stats" not "Get graph stats" — minor inconsistency (InteropReview Low)
-- [ ] InteropReview: `memory.list_sessions` claims `AgentCore equivalent: ListSessions` but this op is not documented in AgentCore Memory API; change to `(Local-only extension: lists sessions for actor.)` (InteropReview Low)
-- [ ] `CreateNamespaceToolParams.name` still missing schemars description (MaintReview note; Tier 1 backlog A2/A3)
-- [ ] MaintReview: internal domain struct fields `from_memory_id`/`to_memory_id` in `GraphInsertEdgeParams` diverge from MCP wire names — intentional adapter, but could confuse future editors (MaintReview Low)
-
-### From LLM discoverability Tier 1 code review (Medium/Low)
-- [ ] Replace "email hash" example in SERVER_INSTRUCTIONS with "UUID or opaque per-user identifier" (SecReview Low)
-- [x] Add schemars description to `name` field on `SwitchStoreParams` and `DeleteStoreParams` — fixed in Tier 2 code review (Interop High); `CreateNamespaceToolParams.name` still needs it
-- [ ] Add schemars description to `BranchToolParams.parent_branch_id` and `GetEventsToolParams.branch_filter` (valid values: "all", "main", branch UUID) (ArchReview Medium A4)
-- [ ] Add schemars description to `direction` field on `GetNeighborsParams` and `TraverseParams` (doc comment only, not in JSON Schema) (ArchReview Low A5)
-- [ ] Add sentence to `memory.switch_store` and `memory.delete_store` descriptions: "This tool does not require actor_id — it operates on the store globally." (ArchReview Low A6)
-- [x] Add schemars description to `UpdateMemoryRecordParams.action` field explaining 'update' vs 'invalidate' semantics — fixed in Tier 2 code review (Interop High)
-- [ ] Add `// keep in sync with crate::db::EMBEDDING_DIM` comment next to "384 dims" in SERVER_INSTRUCTIONS and embedding field descriptions (RelReview Low; MaintReview Low M3; InteropReview Low F1)
-- [ ] Add "Deletes across all actors — not scoped to a specific actor_id." to `memory.delete_expired` description (InteropReview Low F3)
-- [ ] Add `// NOTE: actor_id description is repeated across all param structs — grep for the exact string to find all occurrences when updating.` comment before first occurrence (MaintReview Medium M1)
-- [ ] Add `// TODO(v0.2): update tool names in SERVER_INSTRUCTIONS after Tier 2 rename lands` comment (MaintReview Low M5)
-- [ ] Remove duplicate `/// JSON object string for edge properties` doc comment on `UpdateEdgeToolParams.properties` (MaintReview Low M4)
+#### From R7 design review (Medium/Low)
+- [ ] `QueryFailed` MCP error response must not expose raw rusqlite error text — verify in `error.rs` that inner error is stripped (SecReview Medium)
+- [ ] `serialize_json_opt` / `parse_json_opt` helpers return `rusqlite::Result` — couples JSON logic to rusqlite error type; consider returning `Result<_, MemoryError>` if backend is ever swapped (ArchReview Medium)
+- [ ] Add observability: `parse_json_opt` uses hardcoded column index `0` in error — pass actual column index or add field-name context (RelReview Medium / InteropReview Medium)
+- [ ] `json_object_schema` generated schema has no `additionalProperties: true` — add for strictest MCP client compatibility (InteropReview Low)
+- [ ] Document that `metadata`/`properties` size limit applies to compact-serialized form (SecReview Low)
+- [ ] Memory amplification from double-serialize + clone at bridge: consider threading serialized form if ever a concern (SecReview Low / RelReview Low)
+- [ ] `CreateNamespaceToolParams.name` missing schemars description
+- [ ] Add schemars description to `BranchToolParams.parent_branch_id` and `GetEventsToolParams.branch_filter` (valid values: "all", "main", branch UUID)
+- [ ] Add schemars description to `direction` field on `GetNeighborsParams` and `TraverseParams` (doc comment only, not in JSON Schema)
+- [ ] Add sentence to `store.switch` and `store.delete` descriptions: "This tool does not require actor_id — it operates on the store globally."
+- [ ] Add `// keep in sync with crate::db::EMBEDDING_DIM` comment next to "384 dims" in SERVER_INSTRUCTIONS and embedding field descriptions
+- [ ] Add "Deletes across all actors — not scoped to a specific actor_id." to `memory.delete_expired_events` description
+- [ ] Replace "email hash" example in SERVER_INSTRUCTIONS with "UUID or opaque per-user identifier"
+- [ ] Add `// NOTE: actor_id description is repeated across all param structs — grep for the exact string to find all occurrences when updating.` comment before first occurrence
+- [ ] Remove duplicate `/// JSON object string for edge properties` doc comment on `UpdateEdgeToolParams.properties`
+- [ ] CHANGELOG migration grep note: scope the `"query"`/`"limit"` caveat to `memory.retrieve_memory_records` only; other tools keep `limit`
+- [ ] `graph.traverse` lacks a noun — `namespace.verb` rather than `namespace.verb_noun` convention; acceptable but undocumented
+- [ ] `graph.get_stats` annotation title is "Graph stats" not "Get graph stats" — minor inconsistency
+- [ ] `memory.list_sessions` claims `AgentCore equivalent: ListSessions` but this op is not in AgentCore Memory API; change to `(Local-only extension: lists sessions for actor.)`
+- [ ] Internal domain struct fields `from_memory_id`/`to_memory_id` in `GraphInsertEdgeParams` diverge from MCP wire names — intentional adapter, but add a comment for future editors
 
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)
