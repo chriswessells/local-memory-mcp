@@ -633,3 +633,200 @@ async fn test_error_responses() {
         "invalid_input",
     );
 }
+
+#[tokio::test]
+async fn test_namespace_lifecycle() {
+    let (_dir, server) = setup();
+
+    // create_namespace
+    let ns = parse_ok(
+        server
+            .create_namespace(Parameters(
+                serde_json::from_value(json!({
+                    "name": "/user/alice/prefs",
+                    "description": "Alice preferences"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    assert_eq!(ns["namespace"]["name"], "/user/alice/prefs");
+
+    // create a second namespace
+    parse_ok(
+        server
+            .create_namespace(Parameters(
+                serde_json::from_value(json!({
+                    "name": "/user/alice/history"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+
+    // list_namespaces — both present
+    let list = parse_ok(
+        server
+            .list_namespaces(Parameters(
+                serde_json::from_value(json!({})).unwrap(),
+            ))
+            .await,
+    );
+    assert_eq!(list["namespaces"].as_array().unwrap().len(), 2);
+
+    // list_namespaces with prefix filter
+    let filtered = parse_ok(
+        server
+            .list_namespaces(Parameters(
+                serde_json::from_value(json!({
+                    "prefix": "/user/alice/h"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    assert_eq!(filtered["namespaces"].as_array().unwrap().len(), 1);
+    assert_eq!(filtered["namespaces"][0]["name"], "/user/alice/history");
+
+    // delete_namespace — not_found for unknown namespace
+    parse_err(
+        server
+            .delete_namespace(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "name": "/does/not/exist"
+                }))
+                .unwrap(),
+            ))
+            .await,
+        "not_found",
+    );
+
+    // delete existing namespace
+    let del = parse_ok(
+        server
+            .delete_namespace(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "name": "/user/alice/prefs"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    assert_eq!(del["deleted"], true);
+
+    // list_namespaces — one remains
+    let list2 = parse_ok(
+        server
+            .list_namespaces(Parameters(
+                serde_json::from_value(json!({})).unwrap(),
+            ))
+            .await,
+    );
+    assert_eq!(list2["namespaces"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn test_session_lifecycle() {
+    let (_dir, server) = setup();
+
+    // create an event to use as the anchor
+    let ev = parse_ok(
+        server
+            .create_event(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "sess1",
+                    "event_type": "conversation", "role": "user",
+                    "content": "start of conversation"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    let event_id = ev["id"].as_str().unwrap();
+
+    // create_checkpoint
+    let cp = parse_ok(
+        server
+            .create_checkpoint(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "sess1",
+                    "name": "before-refactor", "event_id": event_id
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    assert!(cp["checkpoint"]["id"].is_string());
+    assert_eq!(cp["checkpoint"]["name"], "before-refactor");
+    assert_eq!(cp["checkpoint"]["event_id"], event_id);
+
+    // list_checkpoints
+    let cps = parse_ok(
+        server
+            .list_checkpoints(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "sess1"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    assert_eq!(cps["checkpoints"].as_array().unwrap().len(), 1);
+    assert_eq!(cps["checkpoints"][0]["name"], "before-refactor");
+
+    // create_branch
+    let br = parse_ok(
+        server
+            .create_branch(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "sess1",
+                    "root_event_id": event_id, "name": "experiment-a"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    assert!(br["branch"]["id"].is_string());
+    assert_eq!(br["branch"]["name"], "experiment-a");
+    assert_eq!(br["branch"]["root_event_id"], event_id);
+
+    // list_branches
+    let brs = parse_ok(
+        server
+            .list_branches(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "sess1"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    assert_eq!(brs["branches"].as_array().unwrap().len(), 1);
+    assert_eq!(brs["branches"][0]["name"], "experiment-a");
+
+    // create second branch off same event
+    parse_ok(
+        server
+            .create_branch(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "sess1",
+                    "root_event_id": event_id, "name": "experiment-b"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+
+    // list_branches — both present
+    let brs2 = parse_ok(
+        server
+            .list_branches(Parameters(
+                serde_json::from_value(json!({
+                    "actor_id": "a1", "session_id": "sess1"
+                }))
+                .unwrap(),
+            ))
+            .await,
+    );
+    assert_eq!(brs2["branches"].as_array().unwrap().len(), 2);
+}

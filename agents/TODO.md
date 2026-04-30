@@ -27,9 +27,9 @@
 
 ## In Progress
 
-- [ ] Component 12: Integration & E2E tests — design (2 review rounds, 2 Critical + 11 High resolved), artifact review complete
+- [x] Component 12: Integration & E2E tests — design (2 review rounds, 2 Critical + 11 High resolved), artifact review complete
   - [x] Task 1: Shared helpers + Cargo.toml update (`tests/common/mod.rs`, tokio dev-dep)
-  - [x] Task 2: Integration tests — 8 test cases in `tests/integration.rs`
+  - [x] Task 2: Integration tests — 10 test cases in `tests/integration.rs`
     - [x] test_event_lifecycle
     - [x] test_memory_lifecycle
     - [x] test_recall_fts
@@ -38,11 +38,12 @@
     - [x] test_actor_isolation
     - [x] test_blob_event_roundtrip
     - [x] test_error_responses
+    - [x] test_namespace_lifecycle (Component 8)
+    - [x] test_session_lifecycle (Component 6)
   - [x] Task 3: E2E tests — 2 test cases in `tests/e2e.rs`
     - [x] test_e2e_mcp_lifecycle
     - [x] test_e2e_stderr_logging
   - [x] Task 4: Final verification (cargo test + cargo clippy)
-  - [ ] Additional tests for Components 6, 8 (when implemented)
 
 - [x] Bug fix: Graceful shutdown — signal handler to cleanly close SQLite before exit (design: `design/graceful-shutdown.md`)
   - [x] Research root cause (POSIX locks released by OS on death; real issue is missing WAL checkpoint/optimize)
