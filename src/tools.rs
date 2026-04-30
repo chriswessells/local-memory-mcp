@@ -146,9 +146,13 @@ fn default_true() -> bool {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateEventParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
+    #[schemars(
+        description = "Identifies the conversation session. Use a stable per-conversation UUID."
+    )]
     session_id: String,
     event_type: EventType,
     #[serde(default)]
@@ -163,43 +167,61 @@ pub struct CreateEventParams {
     metadata: Option<String>,
     #[serde(default)]
     branch_id: Option<String>,
-    #[schemars(description = "ISO 8601 UTC timestamp for event expiry, e.g. '2025-01-15T14:30:00Z'. Optional.")]
+    #[schemars(
+        description = "ISO 8601 UTC timestamp for event expiry, e.g. '2025-01-15T14:30:00Z'. Optional."
+    )]
     #[serde(default)]
     expires_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetEventParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the event, returned by memory.create_event or memory.list_events.")]
+    #[schemars(
+        description = "UUID of the event, returned by memory.create_event or memory.list_events."
+    )]
     event_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListEventsParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
+    #[schemars(
+        description = "Identifies the conversation session. Use a stable per-conversation UUID."
+    )]
     session_id: String,
-    #[schemars(description = "Branch filter: 'all' (default), 'main' (main timeline only), or a specific branch ID.")]
+    #[schemars(
+        description = "Branch filter: 'all' (default), 'main' (main timeline only), or a specific branch ID."
+    )]
     #[serde(default)]
     branch_filter: Option<String>,
     #[serde(default)]
     limit: Option<u32>,
     #[serde(default)]
     offset: Option<u32>,
-    #[schemars(description = "ISO 8601 UTC timestamp to bound the event query window, e.g. '2025-01-15T14:30:00Z'.")]
+    #[schemars(
+        description = "ISO 8601 UTC timestamp to bound the event query window, e.g. '2025-01-15T14:30:00Z'."
+    )]
     #[serde(default)]
     before: Option<String>,
-    #[schemars(description = "ISO 8601 UTC timestamp to bound the event query window, e.g. '2025-01-15T14:30:00Z'.")]
+    #[schemars(
+        description = "ISO 8601 UTC timestamp to bound the event query window, e.g. '2025-01-15T14:30:00Z'."
+    )]
     #[serde(default)]
     after: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListSessionsParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
     #[serde(default)]
     limit: Option<u32>,
@@ -209,12 +231,18 @@ pub struct ListSessionsParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateMemoryRecordParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
     content: String,
-    #[schemars(description = "Free-form label for how this memory was produced. Suggested: 'summarization', 'user_preference', 'semantic', 'verbatim', 'extraction'.")]
+    #[schemars(
+        description = "Free-form label for how this memory was produced. Suggested: 'summarization', 'user_preference', 'semantic', 'verbatim', 'extraction'."
+    )]
     strategy: String,
-    #[schemars(description = "Slash-separated path grouping related memories, e.g. '/user/alice/preferences'.")]
+    #[schemars(
+        description = "Slash-separated path grouping related memories, e.g. '/user/alice/preferences'."
+    )]
     #[serde(default)]
     namespace: Option<String>,
     #[schemars(description = r#"JSON object string, e.g. '{"source":"user"}'. Stored as-is."#)]
@@ -222,7 +250,9 @@ pub struct CreateMemoryRecordParams {
     metadata: Option<String>,
     #[serde(default)]
     source_session_id: Option<String>,
-    #[schemars(description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings.")]
+    #[schemars(
+        description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings."
+    )]
     #[schemars(extend("minItems" = 384, "maxItems" = 384))]
     #[serde(default)]
     embedding: Option<Vec<f32>>,
@@ -230,26 +260,40 @@ pub struct CreateMemoryRecordParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetMemoryRecordParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records.")]
+    #[schemars(
+        description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records."
+    )]
     memory_record_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListMemoryRecordsParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "Slash-separated path grouping related memories, e.g. '/user/alice/preferences'.")]
+    #[schemars(
+        description = "Slash-separated path grouping related memories, e.g. '/user/alice/preferences'."
+    )]
     #[serde(default)]
     namespace: Option<String>,
-    #[schemars(description = "Namespace prefix to filter results. Returns memories whose namespace starts with this value.")]
+    #[schemars(
+        description = "Namespace prefix to filter results. Returns memories whose namespace starts with this value."
+    )]
     #[serde(default)]
     namespace_prefix: Option<String>,
-    #[schemars(description = "Free-form label for how this memory was produced. Suggested: 'summarization', 'user_preference', 'semantic', 'verbatim', 'extraction'.")]
+    #[schemars(
+        description = "Free-form label for how this memory was produced. Suggested: 'summarization', 'user_preference', 'semantic', 'verbatim', 'extraction'."
+    )]
     #[serde(default)]
     strategy: Option<String>,
-    #[schemars(description = "Filter to valid (non-consolidated) memories only. Default: true. Pass false to include superseded memories.")]
+    #[schemars(
+        description = "Filter to valid (non-consolidated) memories only. Default: true. Pass false to include superseded memories."
+    )]
     #[serde(default = "default_true")]
     valid_only: bool,
     #[serde(default)]
@@ -260,15 +304,24 @@ pub struct ListMemoryRecordsParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UpdateMemoryRecordParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records.")]
+    #[schemars(
+        description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records."
+    )]
     memory_record_id: String,
+    #[schemars(
+        description = "Action to perform: 'update' (replaces content, requires new_content) or 'invalidate' (marks the record superseded with no replacement)."
+    )]
     action: ConsolidateActionType,
     #[schemars(description = "Replacement content. Required when action is 'update'.")]
     #[serde(default)]
     new_content: Option<String>,
-    #[schemars(description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings.")]
+    #[schemars(
+        description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings."
+    )]
     #[schemars(extend("minItems" = 384, "maxItems" = 384))]
     #[serde(default)]
     new_embedding: Option<Vec<f32>>,
@@ -276,44 +329,66 @@ pub struct UpdateMemoryRecordParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeleteMemoryRecordParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records.")]
+    #[schemars(
+        description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records."
+    )]
     memory_record_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RetrieveMemoryRecordsParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "Keyword query for full-text search. At least one of search_query or embedding must be provided.")]
+    #[schemars(
+        description = "Keyword query for full-text search. At least one of search_query or embedding must be provided."
+    )]
     #[serde(default)]
     search_query: Option<String>,
-    #[schemars(description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings.")]
+    #[schemars(
+        description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings."
+    )]
     #[schemars(extend("minItems" = 384, "maxItems" = 384))]
     #[serde(default)]
     embedding: Option<Vec<f32>>,
-    #[schemars(description = "Slash-separated path grouping related memories, e.g. '/user/alice/preferences'.")]
+    #[schemars(
+        description = "Slash-separated path grouping related memories, e.g. '/user/alice/preferences'."
+    )]
     #[serde(default)]
     namespace: Option<String>,
-    #[schemars(description = "Namespace prefix to filter results. Returns memories whose namespace starts with this value.")]
+    #[schemars(
+        description = "Namespace prefix to filter results. Returns memories whose namespace starts with this value."
+    )]
     #[serde(default)]
     namespace_prefix: Option<String>,
-    #[schemars(description = "Free-form label for how this memory was produced. Suggested: 'summarization', 'user_preference', 'semantic', 'verbatim', 'extraction'.")]
+    #[schemars(
+        description = "Free-form label for how this memory was produced. Suggested: 'summarization', 'user_preference', 'semantic', 'verbatim', 'extraction'."
+    )]
     #[serde(default)]
     strategy: Option<String>,
-    #[schemars(description = "Maximum number of results to return. Corresponds to AgentCore topK. Default: 10.")]
+    #[schemars(
+        description = "Maximum number of results to return. Corresponds to AgentCore topK. Default: 10."
+    )]
     #[serde(default)]
     top_k: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SwitchStoreParams {
+    #[schemars(
+        description = "Store name: 1–64 alphanumeric characters plus hyphens and underscores (e.g. 'project-alpha')."
+    )]
     name: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeleteStoreParams {
+    #[schemars(description = "Name of the store to delete. Cannot be the currently active store.")]
     name: String,
 }
 
@@ -321,23 +396,35 @@ pub struct DeleteStoreParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateEdgeParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the source memory record, returned by memory.create_memory_record.")]
+    #[schemars(
+        description = "UUID of the source memory record, returned by memory.create_memory_record."
+    )]
     from_memory_record_id: String,
-    #[schemars(description = "UUID of the target memory record, returned by memory.create_memory_record.")]
+    #[schemars(
+        description = "UUID of the target memory record, returned by memory.create_memory_record."
+    )]
     to_memory_record_id: String,
     label: String,
-    #[schemars(description = r#"JSON object string of edge properties, e.g. '{"weight":0.9}'. Optional."#)]
+    #[schemars(
+        description = r#"JSON object string of edge properties, e.g. '{"weight":0.9}'. Optional."#
+    )]
     #[serde(default)]
     properties: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetNeighborsParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records.")]
+    #[schemars(
+        description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records."
+    )]
     memory_record_id: String,
     #[schemars(description = "Direction: 'out' (default), 'in', or 'both'.")]
     #[serde(default)]
@@ -350,9 +437,13 @@ pub struct GetNeighborsParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TraverseParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record to start traversal from, returned by memory.create_memory_record or memory.list_memory_records.")]
+    #[schemars(
+        description = "UUID of the memory record to start traversal from, returned by memory.create_memory_record or memory.list_memory_records."
+    )]
     start_memory_record_id: String,
     #[schemars(description = "Maximum traversal depth. Default: 2, max: 5.")]
     #[serde(default)]
@@ -366,40 +457,56 @@ pub struct TraverseParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UpdateEdgeToolParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the edge, returned by graph.create_edge or graph.get_neighbors.")]
+    #[schemars(
+        description = "UUID of the edge, returned by graph.create_edge or graph.get_neighbors."
+    )]
     edge_id: String,
     #[serde(default)]
     label: Option<String>,
-    #[schemars(description = r#"JSON object string of edge properties, e.g. '{"weight":0.9}'. Optional."#)]
+    #[schemars(
+        description = r#"JSON object string of edge properties, e.g. '{"weight":0.9}'. Optional."#
+    )]
     #[serde(default)]
     properties: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeleteEdgeParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "UUID of the edge, returned by graph.create_edge or graph.get_neighbors.")]
+    #[schemars(
+        description = "UUID of the edge, returned by graph.create_edge or graph.get_neighbors."
+    )]
     edge_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListLabelsParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetStatsParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateNamespaceToolParams {
-    #[schemars(description = "Namespace path, e.g. '/user/alice/preferences'. Up to 512 bytes (UTF-8). Must not contain control characters.")]
+    #[schemars(
+        description = "Namespace path, e.g. '/user/alice/preferences'. Up to 512 bytes (UTF-8). Must not contain control characters."
+    )]
     #[schemars(length(max = 512))]
     name: String,
     #[serde(default)]
@@ -409,7 +516,9 @@ pub struct CreateNamespaceToolParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListNamespacesToolParams {
-    #[schemars(description = "If provided, return only namespaces whose name starts with this prefix.")]
+    #[schemars(
+        description = "If provided, return only namespaces whose name starts with this prefix."
+    )]
     #[serde(default)]
     prefix: Option<String>,
     #[serde(default)]
@@ -420,7 +529,9 @@ pub struct ListNamespacesToolParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeleteNamespaceToolParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
     name: String,
 }
@@ -429,13 +540,21 @@ pub struct DeleteNamespaceToolParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateCheckpointParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
+    #[schemars(
+        description = "Identifies the conversation session. Use a stable per-conversation UUID."
+    )]
     session_id: String,
-    #[schemars(description = "Short label for this checkpoint, e.g. 'before-refactor'. Max 64 chars.")]
+    #[schemars(
+        description = "Short label for this checkpoint, e.g. 'before-refactor'. Max 64 chars."
+    )]
     name: String,
-    #[schemars(description = "UUID of the event, returned by memory.create_event or memory.list_events.")]
+    #[schemars(
+        description = "UUID of the event, returned by memory.create_event or memory.list_events."
+    )]
     event_id: String,
     #[schemars(description = r#"JSON object string, e.g. '{"source":"user"}'. Stored as-is."#)]
     #[serde(default)]
@@ -444,11 +563,17 @@ pub struct CreateCheckpointParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateBranchParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
+    #[schemars(
+        description = "Identifies the conversation session. Use a stable per-conversation UUID."
+    )]
     session_id: String,
-    #[schemars(description = "UUID of the event to fork from, returned by memory.create_event or memory.list_events.")]
+    #[schemars(
+        description = "UUID of the event to fork from, returned by memory.create_event or memory.list_events."
+    )]
     root_event_id: String,
     #[schemars(description = "Name of the new branch, e.g. 'experiment-a'. Max 64 chars.")]
     #[serde(default)]
@@ -459,9 +584,13 @@ pub struct CreateBranchParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListCheckpointsToolParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
+    #[schemars(
+        description = "Identifies the conversation session. Use a stable per-conversation UUID."
+    )]
     session_id: String,
     #[serde(default)]
     limit: Option<u32>,
@@ -471,9 +600,13 @@ pub struct ListCheckpointsToolParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListBranchesToolParams {
-    #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
+    #[schemars(
+        description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose."
+    )]
     actor_id: String,
-    #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
+    #[schemars(
+        description = "Identifies the conversation session. Use a stable per-conversation UUID."
+    )]
     session_id: String,
     #[serde(default)]
     limit: Option<u32>,

@@ -117,9 +117,17 @@ fn validate_json_object(value: &str, field: &str) -> Result<(), MemoryError> {
 fn validate_insert_edge_params(params: &InsertEdgeParams<'_>) -> Result<(), MemoryError> {
     validate_non_empty(params.actor_id, "actor_id")?;
     validate_non_empty(params.from_memory_id, "from_memory_record_id")?;
-    validate_max_len(params.from_memory_id, MAX_MEMORY_ID_LEN, "from_memory_record_id")?;
+    validate_max_len(
+        params.from_memory_id,
+        MAX_MEMORY_ID_LEN,
+        "from_memory_record_id",
+    )?;
     validate_non_empty(params.to_memory_id, "to_memory_record_id")?;
-    validate_max_len(params.to_memory_id, MAX_MEMORY_ID_LEN, "to_memory_record_id")?;
+    validate_max_len(
+        params.to_memory_id,
+        MAX_MEMORY_ID_LEN,
+        "to_memory_record_id",
+    )?;
     validate_non_empty(params.label, "label")?;
     validate_max_len(params.label, MAX_LABEL_LEN, "label")?;
     if params.from_memory_id == params.to_memory_id {

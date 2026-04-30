@@ -396,17 +396,31 @@ AgentCore-aligned rename. Canonical mapping is in
 - [x] Bump `version` in `Cargo.toml` to `0.2.0`
 - [x] Create `CHANGELOG.md` with v0.2.0 breaking-changes table
 
+##### Code review — completed 2026-04-29
+- [x] RelReview High: `cargo fmt --check` failures — ran `cargo fmt`, CI now passes
+- [x] InteropReview High: `UpdateMemoryRecordParams.action` missing schemars description — added
+- [x] InteropReview High: `SwitchStoreParams.name` + `DeleteStoreParams.name` missing schemars — added
+- [x] SecReview/RelReview Medium: CHANGELOG missing `query` → `search_query` field rename row — added, with supplemental grep note
+
 ##### Other Tier-2 items (independent of the rename)
 - [ ] R7: Change `metadata` and graph `properties` from `Option<String>` to `Option<serde_json::Value>` so the JSON Schema reflects the actual object shape
 - [ ] R8: Optional — replace dots with underscores in tool names (`memory_create_event`, `graph_traverse`) for cross-host portability; if keeping dots, document host-compatibility requirement in README
 
+### From LLM discoverability Tier 2 code review (Medium/Low)
+- [ ] CHANGELOG migration grep: scoped note for `"query"` and `"limit"` only applies to `memory.retrieve_memory_records`; other tools keep `limit` (SecReview Medium)
+- [ ] InteropReview: `graph.traverse` lacks a noun — `namespace.verb` rather than `namespace.verb_noun` convention; acceptable but undocumented (InteropReview Medium)
+- [ ] InteropReview: `graph.get_stats` annotation title is "Graph stats" not "Get graph stats" — minor inconsistency (InteropReview Low)
+- [ ] InteropReview: `memory.list_sessions` claims `AgentCore equivalent: ListSessions` but this op is not documented in AgentCore Memory API; change to `(Local-only extension: lists sessions for actor.)` (InteropReview Low)
+- [ ] `CreateNamespaceToolParams.name` still missing schemars description (MaintReview note; Tier 1 backlog A2/A3)
+- [ ] MaintReview: internal domain struct fields `from_memory_id`/`to_memory_id` in `GraphInsertEdgeParams` diverge from MCP wire names — intentional adapter, but could confuse future editors (MaintReview Low)
+
 ### From LLM discoverability Tier 1 code review (Medium/Low)
 - [ ] Replace "email hash" example in SERVER_INSTRUCTIONS with "UUID or opaque per-user identifier" (SecReview Low)
-- [ ] Add schemars description to `name` field on `SwitchStoreParams`, `DeleteStoreParams`, and `CreateNamespaceToolParams` (doc comments are not emitted in JSON Schema) (ArchReview Medium A2, A3; InteropReview Low F2)
+- [x] Add schemars description to `name` field on `SwitchStoreParams` and `DeleteStoreParams` — fixed in Tier 2 code review (Interop High); `CreateNamespaceToolParams.name` still needs it
 - [ ] Add schemars description to `BranchToolParams.parent_branch_id` and `GetEventsToolParams.branch_filter` (valid values: "all", "main", branch UUID) (ArchReview Medium A4)
 - [ ] Add schemars description to `direction` field on `GetNeighborsParams` and `TraverseParams` (doc comment only, not in JSON Schema) (ArchReview Low A5)
 - [ ] Add sentence to `memory.switch_store` and `memory.delete_store` descriptions: "This tool does not require actor_id — it operates on the store globally." (ArchReview Low A6)
-- [ ] Add schemars description to `ConsolidateMemoryParams.action` field explaining 'update' vs 'invalidate' semantics (ArchReview Low A7)
+- [x] Add schemars description to `UpdateMemoryRecordParams.action` field explaining 'update' vs 'invalidate' semantics — fixed in Tier 2 code review (Interop High)
 - [ ] Add `// keep in sync with crate::db::EMBEDDING_DIM` comment next to "384 dims" in SERVER_INSTRUCTIONS and embedding field descriptions (RelReview Low; MaintReview Low M3; InteropReview Low F1)
 - [ ] Add "Deletes across all actors — not scoped to a specific actor_id." to `memory.delete_expired` description (InteropReview Low F3)
 - [ ] Add `// NOTE: actor_id description is repeated across all param structs — grep for the exact string to find all occurrences when updating.` comment before first occurrence (MaintReview Medium M1)

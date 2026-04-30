@@ -35,7 +35,7 @@ before upgrading.
 | `memory_id` | `memory_record_id` | `memory.get_memory_record`, `memory.update_memory_record`, `memory.delete_memory_record`, `graph.get_neighbors` |
 | `from_memory_id` / `to_memory_id` | `from_memory_record_id` / `to_memory_record_id` | `graph.create_edge` |
 | `start_memory_id` | `start_memory_record_id` | `graph.traverse` |
-| `query` | `search_query` | `memory.retrieve_memory_records` only |
+| `query` | `search_query` | `memory.retrieve_memory_records` only — other tools are unaffected |
 | `limit` | `top_k` | `memory.retrieve_memory_records` only (all other tools keep `limit`) |
 
 ### Migration
@@ -44,6 +44,12 @@ Use `grep` to find all calls to update:
 
 ```bash
 grep -rn 'memory\.add_event\|memory\.store\b\|memory\.recall\b\|memory\.get\b\|memory\.list\b\|memory\.consolidate\|memory\.delete\b\|memory\.checkpoint\b\|memory\.branch\b\|memory\.get_events\|memory\.delete_expired\b\|memory\.switch_store\|memory\.current_store\|memory\.list_stores\|memory\.delete_store\|graph\.add_edge\|graph\.stats\b\|"memory_id"\|"from_memory_id"\|"to_memory_id"\|"start_memory_id"' .
+```
+
+For `memory.retrieve_memory_records`, also check for old field names (these won't cause errors — the server silently ignores unknown fields — but results will be wrong):
+
+```bash
+grep -rn '"query"\|"limit"' . | grep -i retrieve
 ```
 
 ---

@@ -60,3 +60,4 @@
 | 2026-04-27 | Component 11: Installers | Design + design review + code + code review | ~25 min |
 | 2026-04-27 | Graceful shutdown bug fix | Research + design + design review (5 personas, 1 Critical + 1 High resolved) + code + code review (5 personas, 1 High + 1 Medium resolved) + merge | ~30 min |
 | 2026-04-29 | LLM discoverability Tier 2 | Coding: 17 tool renames (src/tools.rs + integration.rs + e2e.rs), 5 field renames, description rewrites per style guide, SERVER_INSTRUCTIONS update, CHANGELOG.md, README upgrade section, design doc updates, Cargo.toml → 0.2.0; 151 tests passing, CI grep clean, clippy clean | ~60 min |
+| 2026-04-29 | LLM discoverability Tier 2 | Code review: 5 personas (1 timeout, covered manually); 3 High resolved (fmt failure, 2 missing schemars descriptions), CHANGELOG fixed; 151 tests passing, fmt clean, clippy clean | ~30 min |
