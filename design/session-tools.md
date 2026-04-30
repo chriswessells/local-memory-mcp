@@ -17,7 +17,7 @@ This component does NOT add new schema tables (checkpoints and branches were def
 
 ### High
 
-- **A1**: DESIGN.md Session management tool table updated to show authoritative signatures with `actor_id` on `memory.branch`, `memory.list_checkpoints`, and `memory.list_branches`. Single source of truth is this document; DESIGN.md table updated accordingly.
+- **A1**: DESIGN.md Session management tool table updated to show authoritative signatures with `actor_id` on `memory.create_branch`, `memory.list_checkpoints`, and `memory.list_branches`. Single source of truth is this document; DESIGN.md table updated accordingly.
 - **R1**: `create_branch` wrapped in `unchecked_transaction` (same as `create_checkpoint`). Eliminates TOCTOU window on parent_branch_id check + INSERT, and prevents dangling references if the process crashes between the verification read and the write.
 
 ### Medium (logged to TODO backlog)
@@ -44,13 +44,13 @@ This component does NOT add new schema tables (checkpoints and branches were def
 - S3: UUID format validation — document that length-only is intentional
 - S4: serde_json error never propagated as-is (enforced in sub-agent instructions)
 - S5: Logging policy — no user content at any log level
-- A7: Tool naming verb consistency (memory.checkpoint mirrors AgentCore convention)
+- A7: Tool naming verb consistency (memory.create_checkpoint mirrors AgentCore convention)
 - M4: Consolidate MAX_CHECKPOINT_NAME_LEN / MAX_BRANCH_NAME_LEN to shared constant
 - M5: Add doc comment to sessions.rs clarifying scope
 - R5: Add tracing spans (backlog)
 - R6: Map SQLITE_BUSY to MemoryError::StoreLocked (backlog)
 - I4: Future migration footnote added to scope section
-- I6: Verify branch_id contract with memory.add_event (confirmed: events.branch_id = branches.id UUID)
+- I6: Verify branch_id contract with memory.create_event (confirmed: events.branch_id = branches.id UUID)
 
 ---
 
@@ -422,7 +422,7 @@ pub struct ListBranchesToolParams {
 
 ```rust
 #[tool(
-    name = "memory.checkpoint",
+    name = "memory.create_checkpoint",
     description = "Create a named checkpoint at a specific event within a session. \
                    Checkpoints are named snapshots used for workflow resumption and \
                    conversation bookmarks. Name must be unique per session. Returns \
@@ -448,11 +448,11 @@ pub async fn checkpoint(
 }
 
 #[tool(
-    name = "memory.branch",
+    name = "memory.create_branch",
     description = "Fork a conversation by creating a branch from a specific event. \
                    Branches enable alternative conversation paths, message editing, \
                    and what-if scenarios. Returns the created branch object with its ID \
-                   to use as branch_id in memory.add_event."
+                   to use as branch_id in memory.create_event."
 )]
 pub async fn branch(
     &self,
@@ -500,7 +500,7 @@ pub async fn list_checkpoints(
     name = "memory.list_branches",
     description = "List branches for a session, ordered by creation time. \
                    Returns an array of branch objects including their root event IDs \
-                   and optional names. Use the returned branch id as branch_id in memory.add_event."
+                   and optional names. Use the returned branch id as branch_id in memory.create_event."
 )]
 pub async fn list_branches(
     &self,
@@ -523,7 +523,7 @@ pub async fn list_branches(
 
 ### Notes on deviation from DESIGN.md
 
-The original DESIGN.md spec for `memory.branch`, `memory.list_checkpoints`, and `memory.list_branches` did not include `actor_id`. This design adds `actor_id` to all four tools for actor-level authorization:
+The original DESIGN.md spec for `memory.create_branch`, `memory.list_checkpoints`, and `memory.list_branches` did not include `actor_id`. This design adds `actor_id` to all four tools for actor-level authorization:
 - Without `actor_id`, anyone knowing a `session_id` could list its checkpoints/branches or create branches on sessions they don't own.
 - The `branches` table has no `actor_id` column — scoping at query time via JOIN requires it.
 - This matches the pattern used consistently across all other tools in the server (every tool that operates on session data takes `actor_id`).

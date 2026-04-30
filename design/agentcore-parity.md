@@ -282,6 +282,215 @@ of each affected tool's description so the LLM sees them inline.
 
 ---
 
+## Implementation Notes (post-design-review, 2026-04-29)
+
+Resolves all 7 High findings from the design review.
+
+### Breaking-changes and migration guidance (resolves Rel-F1, Interop-F2, Arch-A7)
+
+This is a **hard rename** — no backward-compatible aliases. Every harness `.mcp.json`
+or system prompt that references v0.1 tool names will break on upgrade. Required
+deliverables alongside the code changes:
+
+1. **`CHANGELOG.md`** — new file at repo root, content:
+   ```
+   ## v0.2.0 — Breaking changes
+
+   All 29 tool names have been realigned with AWS Bedrock AgentCore Memory naming
+   conventions. There are no backward-compatible aliases — update your harness config
+   before upgrading.
+
+   ### Tool renames
+   | v0.1 name | v0.2 name |
+   |---|---|
+   | memory.add_event | memory.create_event |
+   | memory.get_events | memory.list_events |
+   | memory.delete_expired | memory.delete_expired_events |
+   | memory.store | memory.create_memory_record |
+   | memory.get | memory.get_memory_record |
+   | memory.list | memory.list_memory_records |
+   | memory.recall | memory.retrieve_memory_records |
+   | memory.consolidate | memory.update_memory_record |
+   | memory.delete | memory.delete_memory_record |
+   | memory.checkpoint | memory.create_checkpoint |
+   | memory.branch | memory.create_branch |
+   | graph.add_edge | graph.create_edge |
+   | graph.stats | graph.get_stats |
+   | memory.switch_store | store.switch |
+   | memory.current_store | store.current |
+   | memory.list_stores | store.list |
+   | memory.delete_store | store.delete |
+
+   ### Field renames (on affected tools only)
+   | v0.1 field | v0.2 field | Affected tools |
+   |---|---|---|
+   | memory_id | memory_record_id | get_memory_record, update_memory_record, delete_memory_record |
+   | from_memory_id / to_memory_id | from_memory_record_id / to_memory_record_id | graph.create_edge |
+   | start_memory_id | start_memory_record_id | graph.traverse |
+   | query | search_query | memory.retrieve_memory_records only |
+   | limit | top_k | memory.retrieve_memory_records only (all other tools keep `limit`) |
+   ```
+
+2. **README.md** — add "Upgrading from v0.1" section before the tool table with
+   the same rename list and a note: "Use `grep` to find calls to update."
+
+### SERVER_INSTRUCTIONS must be updated (resolves Arch-A1, Interop-F1, Rel-F4, Maint-M4)
+
+`src/tools.rs::SERVER_INSTRUCTIONS` references these v0.1 names in the intent guide:
+`memory.add_event`, `memory.store`, `memory.recall`, `memory.list`, `memory.get`,
+`memory.list_sessions`, `memory.delete_namespace`, `graph.add_edge`.
+
+Update the intent guide section to v0.2 names:
+```
+- Record a conversation turn     → memory.create_event
+- Save an extracted insight      → memory.create_memory_record
+- Search memories by meaning     → memory.retrieve_memory_records
+- Enumerate by namespace/strategy→ memory.list_memory_records
+- Fetch one memory by ID         → memory.get_memory_record
+- Link two memories in graph     → graph.create_edge
+- Walk the knowledge graph       → graph.traverse
+```
+
+Also fix the `store.*` carve-out in the `actor_id` section. After Tier 2, the `store.*`
+tools (`store.switch`, `store.current`, `store.list`, `store.delete`) do not accept
+`actor_id`. Add a sentence: "The `store.*` tools operate globally — they do not
+require `actor_id`."
+
+Also fix the Tier 1 backlog Low item: replace "email hash" example with "UUID or opaque
+per-user identifier" in the `actor_id` section.
+
+### Complete source cleanup file list (resolves Maint-M1)
+
+Update tool-name references in these files. Policy: update files that describe the
+current public API; treat historical review findings in `agents/` as immutable (the
+old names in review docs are correct for the time they were written).
+
+**Must update (public API docs and source):**
+- `src/tools.rs` — all `name = "..."` strings, field names, descriptions, SERVER_INSTRUCTIONS
+- `tests/integration.rs` — see precise grep list below
+- `tests/e2e.rs` — see precise grep list below
+- `README.md` — tool tables (lines ~91–151) and prose
+- `design/DESIGN.md` — feature mapping section
+- `design/mcp-server.md` — tool list and descriptions
+- `design/memory-tools.md` — MCP tool descriptions
+- `design/event-tools.md` — MCP tool descriptions
+- `design/search.md` — recall/search tool references
+- `design/session-tools.md` — checkpoint/branch tool references
+- `design/namespace-tools.md` — namespace tool references
+- `design/knowledge-graph.md` — graph tool references
+- `design/integration-tests.md` — test fixture tool names
+- `design/llm-discoverability.md` — R5/R6 v0.1 name tables
+- `Cargo.toml` — version → "0.2.0"
+
+**Leave unchanged (historical records — old names are correct in context):**
+- `agents/ADR.md`, `agents/TODO.md`, `agents/TIME_LOG.md`, `agents/LESSONS_LEARNED.md`
+
+### Precise grep checklist for tests (resolves Arch-A2, Rel-F2, Maint-M3)
+
+**In `tests/integration.rs` — field renames:**
+- Replace `"memory_id"` with `"memory_record_id"`: lines 109, 135, 164, 177, 272, 485, 536
+- Replace `"from_memory_id"` with `"from_memory_record_id"`: lines 259, 523, 627
+- Replace `"to_memory_id"` with `"to_memory_record_id"`: lines 259, 524, 628
+- Replace `"start_memory_id"` with `"start_memory_record_id"`: line 285
+- Replace `"query"` with `"search_query"` on recall calls: line 211
+- Replace all v0.1 tool name strings: `memory.store`→`memory.create_memory_record`,
+  `memory.recall`→`memory.retrieve_memory_records`, etc.
+
+**In `tests/e2e.rs` — tool names and field names:**
+- Replace `"memory.add_event"` with `"memory.create_event"`: lines 123, 136, 220
+- Replace `"memory.store"` with `"memory.create_memory_record"`: lines 148, 154, 188, 266
+- Replace `"memory.recall"` with `"memory.retrieve_memory_records"`: lines 165, 171
+- Replace `"graph.add_edge"` with `"graph.create_edge"`: lines 182, 203
+- Replace `"query"` with `"search_query"` on recall calls: line 173
+- Replace `"from_memory_id"` / `"to_memory_id"` with `*_record_id` equivalents: lines 205
+
+**CI gate:** After the rename, verify no v0.1 names remain in source or tests:
+```bash
+grep -rn 'memory\.add_event\|memory\.store\b\|memory\.recall\b\|memory\.get\b\|memory\.list\b\|memory\.consolidate\|memory\.delete\b\|memory\.checkpoint\b\|memory\.branch\b\|memory\.get_events\|memory\.delete_expired\b\|memory\.switch_store\|memory\.current_store\|memory\.list_stores\|memory\.delete_store\|graph\.add_edge\|graph\.stats\b\|"memory_id"\|"from_memory_id"\|"to_memory_id"\|"start_memory_id"' src/ tests/
+```
+This command must produce no output before merge.
+
+### Rust method naming (resolves Maint-M2)
+
+To keep `grep` across source and tests coherent, rename Rust handler functions to match
+the last segment of their v0.2 MCP tool name:
+
+| Current Rust name | v0.2 MCP name | New Rust name |
+|---|---|---|
+| `fn add_event` | `memory.create_event` | `fn create_event` |
+| `fn get_event` | `memory.get_event` | (unchanged) |
+| `fn get_events` | `memory.list_events` | `fn list_events` |
+| `fn delete_expired` | `memory.delete_expired_events` | `fn delete_expired_events` |
+| `fn store_memory` | `memory.create_memory_record` | `fn create_memory_record` |
+| `fn get_memory` | `memory.get_memory_record` | `fn get_memory_record` |
+| `fn list_memories` | `memory.list_memory_records` | `fn list_memory_records` |
+| `fn recall` | `memory.retrieve_memory_records` | `fn retrieve_memory_records` |
+| `fn consolidate_memory` | `memory.update_memory_record` | `fn update_memory_record` |
+| `fn delete_memory` | `memory.delete_memory_record` | `fn delete_memory_record` |
+| `fn checkpoint` | `memory.create_checkpoint` | `fn create_checkpoint` |
+| `fn branch` | `memory.create_branch` | `fn create_branch` |
+| `fn add_edge` | `graph.create_edge` | `fn create_edge` |
+| `fn graph_stats` | `graph.get_stats` | `fn get_stats` |
+| `fn switch_store` | `store.switch` | `fn switch_store` (keep — readable) |
+| `fn current_store` | `store.current` | `fn current_store` (keep) |
+| `fn list_stores` | `store.list` | `fn list_stores` (keep) |
+| `fn delete_store` | `store.delete` | `fn delete_store` (keep) |
+
+Unchanged tools: `get_event`, `list_sessions`, `list_checkpoints`, `list_branches`,
+`create_namespace`, `list_namespaces`, `delete_namespace`, `get_neighbors`, `traverse`,
+`update_edge`, `delete_edge`, `list_labels`, `list_sessions`.
+
+### ToolAnnotations carry over automatically (resolves Interop-F7)
+
+Tier 1 `ToolAnnotations` are Rust function attributes (`annotations(title = "...",
+read_only_hint = true)`). The rename changes only the `name = "..."` string in the
+`#[tool(...)]` macro — the annotations attribute on the same function is untouched.
+No re-application needed.
+
+### Implementation plan
+
+**Task order (sequential within each group):**
+
+**Group A — `src/tools.rs` (all changes in one pass):**
+1. Rename Rust method names per table above
+2. Update `name = "..."` strings in all `#[tool(...)]` macros (13 renames + 4 namespace moves)
+3. Rename param struct fields: `memory_id`→`memory_record_id` on `GetMemoryParams`,
+   `ConsolidateParams`, `DeleteMemoryParams`; `from_memory_id`/`to_memory_id`→
+   `from_memory_record_id`/`to_memory_record_id` on `AddEdgeParams`; `start_memory_id`→
+   `start_memory_record_id` on `TraverseParams`; `query`→`search_query` and `limit`→`top_k`
+   on `RecallToolParams`/`RetrieveMemoryRecordsParams` (rename the struct too)
+4. Update `SERVER_INSTRUCTIONS` with v0.2 names, store.* actor_id carve-out,
+   and "UUID or opaque identifier" fix
+5. Update all `#[schemars(description)]` attributes that reference v0.1 tool names
+   (especially `*_id` field descriptions)
+6. Rewrite all 29 tool descriptions following the style guide in this document;
+   include "Use this when X; use Y for Z", Returns clause, AgentCore equivalent tag
+7. Add `#[schemars(description)]` to `top_k` field noting it replaces `limit` on this tool
+8. Add `store.* tools do not require actor_id` note to `store.switch`/`store.current`/
+   `store.list`/`store.delete` descriptions
+9. Run `cargo check` — fix all compile errors (serde field renames cascade to call sites
+   within tools.rs only; all other callers are through the MCP JSON layer)
+
+**Group B — tests (after Group A passes `cargo check`):**
+10. Update `tests/integration.rs` — all field names and tool names per grep checklist
+11. Update `tests/e2e.rs` — all tool names and field names per grep checklist
+12. Run `cargo test` — all 151 must pass
+
+**Group C — docs and version (can run in parallel with Group B):**
+13. Update `README.md` — tool tables + add "Upgrading from v0.1" section
+14. Update design docs: `design/DESIGN.md`, `design/mcp-server.md`, `design/memory-tools.md`,
+    `design/event-tools.md`, `design/search.md`, `design/session-tools.md`,
+    `design/namespace-tools.md`, `design/knowledge-graph.md`, `design/integration-tests.md`,
+    `design/llm-discoverability.md`
+15. Bump `Cargo.toml` version → `"0.2.0"`
+16. Create `CHANGELOG.md` with v0.2.0 breaking-changes table
+
+**Group D — final gate:**
+17. Run the CI grep command (see above) — must produce no output
+18. Run `cargo clippy -- -D warnings` — must pass clean
+
+---
+
 ## References
 
 ### AgentCore Memory documentation

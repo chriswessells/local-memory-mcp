@@ -9,10 +9,10 @@ use serde_json::json;
 async fn test_event_lifecycle() {
     let (_dir, server) = setup();
 
-    // add_event (conversation)
+    // create_event (conversation)
     let ev = parse_ok(
         server
-            .add_event(Parameters(
+            .create_event(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
                     "role": "user", "content": "hello world"
@@ -39,10 +39,10 @@ async fn test_event_lifecycle() {
     );
     assert_eq!(ev2["id"], event_id);
 
-    // get_events
+    // list_events
     let evts = parse_ok(
         server
-            .get_events(Parameters(
+            .list_events(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "session_id": "s1"
                 }))
@@ -65,10 +65,10 @@ async fn test_event_lifecycle() {
     );
     assert_eq!(sessions[0]["event_count"], 1);
 
-    // add expired event + delete_expired
+    // add expired event + delete_expired_events
     parse_ok(
         server
-            .add_event(Parameters(
+            .create_event(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
                     "role": "user", "content": "expired",
@@ -78,7 +78,7 @@ async fn test_event_lifecycle() {
             ))
             .await,
     );
-    let del = parse_ok(server.delete_expired().await);
+    let del = parse_ok(server.delete_expired_events().await);
     assert_eq!(del["deleted"], 1);
 }
 
@@ -86,10 +86,10 @@ async fn test_event_lifecycle() {
 async fn test_memory_lifecycle() {
     let (_dir, server) = setup();
 
-    // store
+    // create_memory_record
     let mem = parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "content": "rust is great", "strategy": "core"
                 }))
@@ -101,12 +101,12 @@ async fn test_memory_lifecycle() {
     assert_eq!(mem["is_valid"], true);
     let mem_id = mem["id"].as_str().unwrap();
 
-    // get
+    // get_memory_record
     let m2 = parse_ok(
         server
-            .get_memory(Parameters(
+            .get_memory_record(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "a1", "memory_id": mem_id
+                    "actor_id": "a1", "memory_record_id": mem_id
                 }))
                 .unwrap(),
             ))
@@ -114,10 +114,10 @@ async fn test_memory_lifecycle() {
     );
     assert_eq!(m2["id"], mem_id);
 
-    // list
+    // list_memory_records
     let list = parse_ok(
         server
-            .list_memories(Parameters(
+            .list_memory_records(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1"
                 }))
@@ -127,12 +127,12 @@ async fn test_memory_lifecycle() {
     );
     assert_eq!(list.as_array().unwrap().len(), 1);
 
-    // consolidate (update)
+    // update_memory_record (update)
     let new_mem = parse_ok(
         server
-            .consolidate(Parameters(
+            .update_memory_record(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "a1", "memory_id": mem_id,
+                    "actor_id": "a1", "memory_record_id": mem_id,
                     "action": "update", "new_content": "rust is amazing"
                 }))
                 .unwrap(),
@@ -145,7 +145,7 @@ async fn test_memory_lifecycle() {
     // list valid_only → only new memory
     let list = parse_ok(
         server
-            .list_memories(Parameters(
+            .list_memory_records(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "valid_only": true
                 }))
@@ -156,12 +156,12 @@ async fn test_memory_lifecycle() {
     assert_eq!(list.as_array().unwrap().len(), 1);
     assert_eq!(list[0]["id"], new_id);
 
-    // delete
+    // delete_memory_record
     let del = parse_ok(
         server
-            .delete_memory(Parameters(
+            .delete_memory_record(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "a1", "memory_id": new_id
+                    "actor_id": "a1", "memory_record_id": new_id
                 }))
                 .unwrap(),
             ))
@@ -172,9 +172,9 @@ async fn test_memory_lifecycle() {
     // get deleted → not_found
     parse_err(
         server
-            .get_memory(Parameters(
+            .get_memory_record(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "a1", "memory_id": new_id
+                    "actor_id": "a1", "memory_record_id": new_id
                 }))
                 .unwrap(),
             ))
@@ -194,7 +194,7 @@ async fn test_recall_fts() {
     ] {
         parse_ok(
             server
-                .store_memory(Parameters(
+                .create_memory_record(Parameters(
                     serde_json::from_value(json!({
                         "actor_id": "a1", "content": content, "strategy": "core"
                     }))
@@ -206,9 +206,9 @@ async fn test_recall_fts() {
 
     let results = parse_ok(
         server
-            .recall(Parameters(
+            .retrieve_memory_records(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "a1", "query": "fox"
+                    "actor_id": "a1", "search_query": "fox"
                 }))
                 .unwrap(),
             ))
@@ -226,7 +226,7 @@ async fn test_graph_lifecycle() {
 
     let m1 = parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "content": "memory one", "strategy": "core"
                 }))
@@ -240,7 +240,7 @@ async fn test_graph_lifecycle() {
 
     let m2 = parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "content": "memory two", "strategy": "core"
                 }))
@@ -252,11 +252,11 @@ async fn test_graph_lifecycle() {
         .unwrap()
         .to_string();
 
-    // add_edge
+    // create_edge
     let edge = parse_ok(
         server
-            .add_edge(Parameters(serde_json::from_value(json!({
-                "actor_id": "a1", "from_memory_id": m1, "to_memory_id": m2, "label": "relates_to"
+            .create_edge(Parameters(serde_json::from_value(json!({
+                "actor_id": "a1", "from_memory_record_id": m1, "to_memory_record_id": m2, "label": "relates_to"
             })).unwrap()))
             .await,
     );
@@ -269,7 +269,7 @@ async fn test_graph_lifecycle() {
         server
             .get_neighbors(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "a1", "memory_id": m1
+                    "actor_id": "a1", "memory_record_id": m1
                 }))
                 .unwrap(),
             ))
@@ -282,7 +282,7 @@ async fn test_graph_lifecycle() {
         server
             .traverse(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "a1", "start_memory_id": m1
+                    "actor_id": "a1", "start_memory_record_id": m1
                 }))
                 .unwrap(),
             ))
@@ -329,10 +329,10 @@ async fn test_graph_lifecycle() {
     );
     assert!(labels.is_array());
 
-    // graph_stats
+    // get_stats
     let stats = parse_ok(
         server
-            .graph_stats(Parameters(
+            .get_stats(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1"
                 }))
@@ -350,7 +350,7 @@ async fn test_store_isolation() {
     // Store memory in default
     parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "content": "default mem", "strategy": "core"
                 }))
@@ -378,7 +378,7 @@ async fn test_store_isolation() {
     // list in other → empty
     let list = parse_ok(
         server
-            .list_memories(Parameters(
+            .list_memory_records(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1"
                 }))
@@ -391,7 +391,7 @@ async fn test_store_isolation() {
     // store in other
     parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "content": "other mem", "strategy": "core"
                 }))
@@ -415,7 +415,7 @@ async fn test_store_isolation() {
     // list → only original
     let list = parse_ok(
         server
-            .list_memories(Parameters(
+            .list_memory_records(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1"
                 }))
@@ -451,7 +451,7 @@ async fn test_actor_isolation() {
     // Store 2 memories as alice
     let alice_m1 = parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "alice", "content": "alice mem 1", "strategy": "core"
                 }))
@@ -465,7 +465,7 @@ async fn test_actor_isolation() {
 
     let alice_m2 = parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "alice", "content": "alice mem 2", "strategy": "core"
                 }))
@@ -480,9 +480,9 @@ async fn test_actor_isolation() {
     // bob can't see alice's memory
     parse_err(
         server
-            .get_memory(Parameters(
+            .get_memory_record(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "bob", "memory_id": alice_m1
+                    "actor_id": "bob", "memory_record_id": alice_m1
                 }))
                 .unwrap(),
             ))
@@ -493,7 +493,7 @@ async fn test_actor_isolation() {
     // bob stores his own
     parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "bob", "content": "bob mem", "strategy": "core"
                 }))
@@ -505,7 +505,7 @@ async fn test_actor_isolation() {
     // alice list → only her 2
     let list = parse_ok(
         server
-            .list_memories(Parameters(
+            .list_memory_records(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "alice"
                 }))
@@ -518,10 +518,10 @@ async fn test_actor_isolation() {
     // add edge between alice's memories
     parse_ok(
         server
-            .add_edge(Parameters(
+            .create_edge(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "alice", "from_memory_id": alice_m1,
-                    "to_memory_id": alice_m2, "label": "link"
+                    "actor_id": "alice", "from_memory_record_id": alice_m1,
+                    "to_memory_record_id": alice_m2, "label": "link"
                 }))
                 .unwrap(),
             ))
@@ -533,7 +533,7 @@ async fn test_actor_isolation() {
         server
             .get_neighbors(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "bob", "memory_id": alice_m1
+                    "actor_id": "bob", "memory_record_id": alice_m1
                 }))
                 .unwrap(),
             ))
@@ -550,7 +550,7 @@ async fn test_blob_event_roundtrip() {
 
     let ev = parse_ok(
         server
-            .add_event(Parameters(
+            .create_event(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "session_id": "s1", "event_type": "blob",
                     "blob_data": original
@@ -592,10 +592,10 @@ async fn test_error_responses() {
     );
     assert!(e["message"].is_string());
 
-    // store empty content → invalid_input
+    // create empty content → invalid_input
     parse_err(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "content": "", "strategy": "core"
                 }))
@@ -608,7 +608,7 @@ async fn test_error_responses() {
     // self-edge → invalid_input
     let mid = parse_ok(
         server
-            .store_memory(Parameters(
+            .create_memory_record(Parameters(
                 serde_json::from_value(json!({
                     "actor_id": "a1", "content": "for edge test", "strategy": "core"
                 }))
@@ -622,10 +622,10 @@ async fn test_error_responses() {
 
     parse_err(
         server
-            .add_edge(Parameters(
+            .create_edge(Parameters(
                 serde_json::from_value(json!({
-                    "actor_id": "a1", "from_memory_id": mid,
-                    "to_memory_id": mid, "label": "self"
+                    "actor_id": "a1", "from_memory_record_id": mid,
+                    "to_memory_record_id": mid, "label": "self"
                 }))
                 .unwrap(),
             ))

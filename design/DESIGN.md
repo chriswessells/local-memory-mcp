@@ -20,25 +20,25 @@ This is the north-star design constraint. It means:
 
 1. **Same conceptual model**: Short-term events, long-term memories, actors, sessions, namespaces, strategies, branching, checkpointing — all work the same way. An agent prompt that says "store user preferences in the `/user/{actorId}/preferences` namespace using the `user_preference` strategy" should work identically against either backend.
 
-2. **Same tool semantics**: The MCP tools mirror AgentCore Memory's API operations. `memory.add_event` behaves like `CreateEvent`. `memory.recall` behaves like `RetrieveMemoryRecords`. `memory.store` behaves like the result of the extraction pipeline. Parameter names, return shapes, and error semantics should be close enough that a prompt written for one works for the other without modification.
+2. **Same tool semantics**: The MCP tools mirror AgentCore Memory's API operations. `memory.create_event` behaves like `CreateEvent`. `memory.retrieve_memory_records` behaves like `RetrieveMemoryRecords`. `memory.create_memory_record` behaves like the result of the extraction pipeline. Parameter names, return shapes, and error semantics should be close enough that a prompt written for one works for the other without modification.
 
 3. **Same data lifecycle**: Events are immutable. Memories are extracted from events. Memories can be consolidated (updated or invalidated). Superseded memories leave an audit trail. Namespaces organize memories hierarchically. Sessions group events chronologically.
 
 4. **Transparent differences**: The only differences an agent might notice are:
-   - **Extraction is explicit**: The agent calls `memory.store` instead of extraction happening automatically in the background. A prompt can handle this with: "After each conversation, extract key insights and store them as memories."
+   - **Extraction is explicit**: The agent calls `memory.create_memory_record` instead of extraction happening automatically in the background. A prompt can handle this with: "After each conversation, extract key insights and store them as memories."
    - **Embeddings are caller-provided**: The agent provides vectors instead of the server generating them. A prompt can handle this with: "When storing or recalling memories, generate an embedding for the content."
-   - **Store management is local-only**: `memory.switch_store`, `memory.list_stores`, etc. are additional tools that don't exist in AgentCore. An agent prompt can simply ignore them if targeting both backends.
+   - **Store management is local-only**: `store.switch`, `store.list`, etc. are additional tools that don't exist in AgentCore. An agent prompt can simply ignore them if targeting both backends.
    - **Knowledge graph is additive**: `graph.*` tools provide relationship traversal between memories. AgentCore Memory doesn't have this natively. An agent prompt can use graph tools when available and fall back to namespace-based organization when not.
 
 5. **Prompt portability**: A single system prompt like the following should work against either backend:
 
    ```
    You have access to a memory system. Use it to:
-   - Store conversation events with memory.add_event (actor_id, session_id, role, content)
-   - Extract and store insights with memory.store (actor_id, content, strategy, namespace)
-   - Recall relevant memories with memory.recall (actor_id, query, namespace)
+   - Store conversation events with memory.create_event (actor_id, session_id, role, content)
+   - Extract and store insights with memory.create_memory_record (actor_id, content, strategy, namespace)
+   - Recall relevant memories with memory.retrieve_memory_records (actor_id, query, namespace)
    - List past sessions with memory.list_sessions (actor_id)
-   - Consolidate outdated memories with memory.consolidate (memory_id, action)
+   - Consolidate outdated memories with memory.update_memory_record (memory_id, action)
 
    Strategies: 'semantic' for facts, 'summary' for session summaries, 'user_preference' for preferences.
    Organize memories in namespaces like /user/{actorId}/preferences, /user/{actorId}/facts.
@@ -48,7 +48,7 @@ This is the north-star design constraint. It means:
 
    ```
    When you identify relationships between memories, link them:
-   - graph.add_edge (from_memory_id, to_memory_id, label, properties?)
+   - graph.create_edge (from_memory_id, to_memory_id, label, properties?)
    - graph.get_neighbors (memory_id, direction?, label?)
    - graph.traverse (start_memory_id, max_depth?, label?, direction?)
    ```
@@ -156,23 +156,23 @@ This project implements a local equivalent of each AgentCore Memory capability, 
 |--------------------------|---------------------|
 | **Short-term memory** (session events) | `events` table — immutable, ordered by timestamp, scoped by actor + session |
 | **Long-term memory** (extracted insights) | `memories` table — persistent facts, preferences, summaries with embeddings |
-| **Memory strategies** (semantic, summary, user_preference, custom) | Agent-driven extraction via MCP tools. The agent calls `memory.store` with the insight and strategy label; the server stores and indexes it. |
+| **Memory strategies** (semantic, summary, user_preference, custom) | Agent-driven extraction via MCP tools. The agent calls `memory.create_memory_record` with the insight and strategy label; the server stores and indexes it. |
 | **Namespaces** (hierarchical organization) | `namespaces` table — hierarchical paths like `/org/user/preferences`. Supports prefix matching on retrieval. |
 | **Dynamic namespace templates** ({actorId}, {sessionId}) | The agent constructs namespace paths before calling tools. The server stores the resolved path. |
 | **Actor/session scoping** | All events scoped by `actor_id` + `session_id`. Memories scoped by `actor_id` + optional `namespace`. |
 | **Session listing** (ListSessions) | `memory.list_sessions` tool — list distinct sessions for an actor with event counts and date ranges |
 | **Event retrieval** (GetEvent) | `memory.get_event` tool — retrieve a single event by ID |
-| **Event metadata** (key-value filtering) | `metadata` JSON column on events. `memory.get_events` supports filtering by metadata keys/values via JSON path queries. |
-| **Semantic search** (RetrieveMemoryRecords) | `sqlite-vec` HNSW index on memory embeddings. Agent provides query vector. `memory.recall` with `embedding` param. |
-| **Keyword search** | FTS5 index on memory content. `memory.recall` with `query` param. |
-| **Get single memory** (GetMemoryRecord) | `memory.get` tool — retrieve a single memory by ID |
-| **List memories** (ListMemoryRecords) | `memory.list` tool — list memories with filters (actor, namespace, strategy, validity) |
+| **Event metadata** (key-value filtering) | `metadata` JSON column on events. `memory.list_events` supports filtering by metadata keys/values via JSON path queries. |
+| **Semantic search** (RetrieveMemoryRecords) | `sqlite-vec` HNSW index on memory embeddings. Agent provides query vector. `memory.retrieve_memory_records` with `embedding` param. |
+| **Keyword search** | FTS5 index on memory content. `memory.retrieve_memory_records` with `query` param. |
+| **Get single memory** (GetMemoryRecord) | `memory.get_memory_record` tool — retrieve a single memory by ID |
+| **List memories** (ListMemoryRecords) | `memory.list_memory_records` tool — list memories with filters (actor, namespace, strategy, validity) |
 | **Branching** | `branches` table — fork conversation from any event (`root_event_id`), creating alternative paths. Supports message editing, what-if scenarios, and alternative approaches. |
 | **Checkpointing** | `checkpoints` table — named snapshots of conversation state within a session. Used for workflow resumption and conversation bookmarks. |
 | **Blob storage** | Blob events (`event_type = 'blob'`) with `blob_data` column. Used for agent state, not processed for long-term memory extraction. |
-| **TTL / expiry** | `expires_at` column on events. Cleanup via `memory.delete_expired` tool. |
-| **Consolidation** (extraction + consolidation) | `memory.consolidate` tool — update or invalidate memories. Immutable audit trail via `is_valid` flag (superseded memories marked invalid, not deleted). |
-| **PII awareness** | Documented as agent responsibility. The server stores what the agent sends. The agent should filter PII before calling `memory.store`. Noted in best practices. |
+| **TTL / expiry** | `expires_at` column on events. Cleanup via `memory.delete_expired_events` tool. |
+| **Consolidation** (extraction + consolidation) | `memory.update_memory_record` tool — update or invalidate memories. Immutable audit trail via `is_valid` flag (superseded memories marked invalid, not deleted). |
+| **PII awareness** | Documented as agent responsibility. The server stores what the agent sends. The agent should filter PII before calling `memory.create_memory_record`. Noted in best practices. |
 | **Observability** | Tracing spans on all operations. Logged to stderr. `memory.stats` tool for counts and sizes. |
 
 ### Beyond AgentCore Memory: Knowledge Graph
@@ -184,8 +184,8 @@ AgentCore Memory does not include a graph database. This project adds one as a f
 | **Typed edges between memories** | `knowledge_edges` table — labeled, directed relationships with properties |
 | **Neighbor discovery** | `graph.get_neighbors` — find directly connected memories by direction and label |
 | **Multi-hop traversal** | `graph.traverse` — BFS traversal via recursive CTEs, configurable depth and label filters |
-| **Edge management** | `graph.add_edge`, `graph.update_edge`, `graph.delete_edge` |
-| **Graph statistics** | `graph.stats` — edge count, label distribution |
+| **Edge management** | `graph.create_edge`, `graph.update_edge`, `graph.delete_edge` |
+| **Graph statistics** | `graph.get_stats` — edge count, label distribution |
 
 This enables the agent to build a knowledge graph on top of its memories — linking concepts, tracking dependencies, mapping relationships between projects, people, tools, and ideas. The graph and memory systems share the same SQLite file and ACID transactions.
 
@@ -193,11 +193,11 @@ This enables the agent to build a knowledge graph on top of its memories — lin
 
 - **No managed LLM for extraction**: AgentCore Memory uses Bedrock models to automatically extract insights from events asynchronously. Locally, the agent (Kiro) performs extraction and provides the insight text via MCP tools. This keeps the server dependency-free.
 - **Embeddings provided by caller**: The server doesn't generate embeddings. The agent provides embedding vectors when storing memories and query vectors when searching. This avoids bundling a model.
-- **No automatic async extraction pipeline**: In AgentCore, long-term memory extraction happens automatically in the background after events are created. Here, the agent explicitly calls `memory.store` when it has an insight to persist. The server is a storage layer, not an intelligence layer.
+- **No automatic async extraction pipeline**: In AgentCore, long-term memory extraction happens automatically in the background after events are created. Here, the agent explicitly calls `memory.create_memory_record` when it has an insight to persist. The server is a storage layer, not an intelligence layer.
 - **Knowledge graph is additive**: `graph.*` tools are a local-only extension. AgentCore Memory doesn't have native graph traversal. The graph tools are optional — an agent can use the memory system without them.
 - **Single-user**: No IAM, no encryption at rest (relies on OS file permissions), no multi-tenant access control.
 - **Local-first**: All data stays on disk. No network calls. No cloud dependency.
-- **Store management is additive**: `memory.switch_store`, `memory.list_stores`, etc. are local-only tools that don't exist in AgentCore. They extend the API without breaking compatibility — an agent prompt targeting both backends simply doesn't use them.
+- **Store management is additive**: `store.switch`, `store.list`, etc. are local-only tools that don't exist in AgentCore. They extend the API without breaking compatibility — an agent prompt targeting both backends simply doesn't use them.
 
 ---
 
@@ -337,34 +337,34 @@ Schema version is tracked via `PRAGMA user_version` (built-in SQLite integer in 
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `memory.add_event` | `actor_id`, `session_id`, `event_type`, `role?`, `content?`, `blob_data?`, `metadata?`, `branch_id?` | Store an immutable event |
+| `memory.create_event` | `actor_id`, `session_id`, `event_type`, `role?`, `content?`, `blob_data?`, `metadata?`, `branch_id?` | Store an immutable event |
 | `memory.get_event` | `event_id` | Retrieve a single event by ID |
-| `memory.get_events` | `actor_id`, `session_id`, `branch_id?`, `limit?`, `before?`, `after?`, `metadata_filter?` | Retrieve events in chronological order, optionally filtered by metadata key-value pairs |
+| `memory.list_events` | `actor_id`, `session_id`, `branch_id?`, `limit?`, `before?`, `after?`, `metadata_filter?` | Retrieve events in chronological order, optionally filtered by metadata key-value pairs |
 | `memory.list_sessions` | `actor_id`, `limit?`, `offset?` | List distinct sessions for an actor with event counts and date ranges |
-| `memory.delete_expired` | — | Remove events past their `expires_at` |
+| `memory.delete_expired_events` | — | Remove events past their `expires_at` |
 
 ### Long-term memory
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `memory.store` | `actor_id`, `content`, `strategy`, `namespace?`, `metadata?`, `source_session_id?`, `embedding?` | Store an extracted insight with optional embedding vector |
-| `memory.get` | `memory_id` | Retrieve a single memory by ID |
-| `memory.recall` | `actor_id`, `query?`, `embedding?`, `namespace?`, `namespace_prefix?`, `strategy?`, `limit?` | Search memories by text (FTS5) and/or vector similarity. Supports namespace prefix matching. |
-| `memory.consolidate` | `memory_id`, `new_content?`, `new_embedding?`, `action` (update/invalidate) | Update or invalidate a memory. On update, the old memory is marked invalid with `superseded_by` pointing to the new one. |
-| `memory.list` | `actor_id`, `namespace?`, `namespace_prefix?`, `strategy?`, `valid_only?`, `limit?`, `offset?` | List memories with filters. Supports namespace prefix matching. |
-| `memory.delete` | `memory_id` | Hard-delete a memory and its edges |
+| `memory.create_memory_record` | `actor_id`, `content`, `strategy`, `namespace?`, `metadata?`, `source_session_id?`, `embedding?` | Store an extracted insight with optional embedding vector |
+| `memory.get_memory_record` | `memory_id` | Retrieve a single memory by ID |
+| `memory.retrieve_memory_records` | `actor_id`, `query?`, `embedding?`, `namespace?`, `namespace_prefix?`, `strategy?`, `limit?` | Search memories by text (FTS5) and/or vector similarity. Supports namespace prefix matching. |
+| `memory.update_memory_record` | `memory_id`, `new_content?`, `new_embedding?`, `action` (update/invalidate) | Update or invalidate a memory. On update, the old memory is marked invalid with `superseded_by` pointing to the new one. |
+| `memory.list_memory_records` | `actor_id`, `namespace?`, `namespace_prefix?`, `strategy?`, `valid_only?`, `limit?`, `offset?` | List memories with filters. Supports namespace prefix matching. |
+| `memory.delete_memory_record` | `memory_id` | Hard-delete a memory and its edges |
 
 ### Knowledge graph (local-only, not in AgentCore)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `graph.add_edge` | `from_memory_id`, `to_memory_id`, `label`, `properties?` | Create a directed, labeled relationship between two memories |
+| `graph.create_edge` | `from_memory_id`, `to_memory_id`, `label`, `properties?` | Create a directed, labeled relationship between two memories |
 | `graph.get_neighbors` | `memory_id`, `direction?` (out/in/both), `label?`, `limit?` | Get directly connected memories |
 | `graph.traverse` | `start_memory_id`, `max_depth?` (default 2, max 5), `label?`, `direction?` | Multi-hop BFS traversal via recursive CTEs |
 | `graph.update_edge` | `edge_id`, `label?`, `properties?` | Update an edge's label or properties |
 | `graph.delete_edge` | `edge_id` | Delete a relationship |
 | `graph.list_labels` | — | List all distinct edge labels with counts |
-| `graph.stats` | — | Edge count, label distribution, most-connected memories |
+| `graph.get_stats` | — | Edge count, label distribution, most-connected memories |
 
 ### Namespaces
 
@@ -378,8 +378,8 @@ Schema version is tracked via `PRAGMA user_version` (built-in SQLite integer in 
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `memory.checkpoint` | `session_id`, `actor_id`, `name`, `event_id`, `metadata?` | Create a named checkpoint at a specific event |
-| `memory.branch` | `session_id`, `actor_id`, `root_event_id`, `name?`, `parent_branch_id?` | Fork conversation from any event, creating an alternative path |
+| `memory.create_checkpoint` | `session_id`, `actor_id`, `name`, `event_id`, `metadata?` | Create a named checkpoint at a specific event |
+| `memory.create_branch` | `session_id`, `actor_id`, `root_event_id`, `name?`, `parent_branch_id?` | Fork conversation from any event, creating an alternative path |
 | `memory.list_checkpoints` | `actor_id`, `session_id`, `limit?`, `offset?` | List checkpoints for a session |
 | `memory.list_branches` | `actor_id`, `session_id`, `limit?`, `offset?` | List branches for a session |
 
@@ -387,10 +387,10 @@ Schema version is tracked via `PRAGMA user_version` (built-in SQLite integer in 
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `memory.switch_store` | `name` | Close current store, open named store (creates if new) |
-| `memory.current_store` | — | Return the name of the active store |
-| `memory.list_stores` | — | List all stores with names and file sizes |
-| `memory.delete_store` | `name` | Delete a store file. Cannot delete the active store. |
+| `store.switch` | `name` | Close current store, open named store (creates if new) |
+| `store.current` | — | Return the name of the active store |
+| `store.list` | — | List all stores with names and file sizes |
+| `store.delete` | `name` | Delete a store file. Cannot delete the active store. |
 
 ### Utility
 
@@ -410,13 +410,13 @@ These mirror AgentCore Memory best practices, adapted for local use:
 
 2. **Memory strategies**: Use `semantic` for facts and knowledge, `summary` for session summaries, `user_preference` for preferences and choices, `custom` for domain-specific insights.
 
-3. **Efficient memory operations**: Retrieve relevant memories at the start of each interaction for context hydration. Use `memory.recall` with semantic search for related memories, `memory.get_events` for recent session context, `memory.list` with strategy filter for summaries.
+3. **Efficient memory operations**: Retrieve relevant memories at the start of each interaction for context hydration. Use `memory.retrieve_memory_records` with semantic search for related memories, `memory.list_events` for recent session context, `memory.list_memory_records` with strategy filter for summaries.
 
-4. **PII awareness**: The server stores what the agent sends. Filter PII before calling `memory.store` if the memory shouldn't contain personal information. Blob events are not processed for long-term memory — use them for transient agent state.
+4. **PII awareness**: The server stores what the agent sends. Filter PII before calling `memory.create_memory_record` if the memory shouldn't contain personal information. Blob events are not processed for long-term memory — use them for transient agent state.
 
-5. **Consolidation rhythm**: Periodically consolidate related memories to avoid duplication. Use `memory.consolidate` with `action: 'update'` to merge insights, or `action: 'invalidate'` to mark outdated memories. The audit trail preserves history via `superseded_by`.
+5. **Consolidation rhythm**: Periodically consolidate related memories to avoid duplication. Use `memory.update_memory_record` with `action: 'update'` to merge insights, or `action: 'invalidate'` to mark outdated memories. The audit trail preserves history via `superseded_by`.
 
-6. **Knowledge graph**: When you identify relationships between memories, link them with `graph.add_edge`. Use descriptive labels like `uses`, `depends_on`, `related_to`, `authored_by`, `part_of`. Use `graph.traverse` to discover connected knowledge — e.g., "what does this project depend on, and what do those dependencies depend on?"
+6. **Knowledge graph**: When you identify relationships between memories, link them with `graph.create_edge`. Use descriptive labels like `uses`, `depends_on`, `related_to`, `authored_by`, `part_of`. Use `graph.traverse` to discover connected knowledge — e.g., "what does this project depend on, and what do those dependencies depend on?"
 
 ---
 
@@ -435,7 +435,7 @@ Each memory store is a separate SQLite file:
 ### Lifecycle
 
 1. **Startup** — opens `default.db`. Creates it with schema if new.
-2. **Switch** — `memory.switch_store` closes current connection, opens named store.
+2. **Switch** — `store.switch` closes current connection, opens named store.
 3. **All tools** operate against the active store.
 4. **One store open at a time** — no concurrent connections.
 

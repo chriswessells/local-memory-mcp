@@ -360,40 +360,41 @@ AgentCore-aligned rename. Canonical mapping is in
 13 tools unchanged.
 
 ##### Tool renames
-- [ ] Rename `memory.add_event` → `memory.create_event` (AgentCore: `CreateEvent`)
-- [ ] Rename `memory.get_events` → `memory.list_events` (AgentCore: `ListEvents`)
-- [ ] Rename `memory.delete_expired` → `memory.delete_expired_events`
-- [ ] Rename `memory.store` → `memory.create_memory_record` (AgentCore: `CreateMemoryRecord`/`BatchCreateMemoryRecords`); resolves the `memory.store`/`memory.list_stores` noun-verb collision
-- [ ] Rename `memory.get` → `memory.get_memory_record` (AgentCore: `GetMemoryRecord`)
-- [ ] Rename `memory.list` → `memory.list_memory_records` (AgentCore: `ListMemoryRecords`)
-- [ ] Rename `memory.recall` → `memory.retrieve_memory_records` (AgentCore: `RetrieveMemoryRecords`); highest-leverage rename — surfaces "retrieve"/"search" intent
-- [ ] Rename `memory.consolidate` → `memory.update_memory_record` (closest AgentCore op: `BatchUpdateMemoryRecords`)
-- [ ] Rename `memory.delete` → `memory.delete_memory_record` (AgentCore: `DeleteMemoryRecord`)
-- [ ] Rename `memory.checkpoint` → `memory.create_checkpoint`
-- [ ] Rename `memory.branch` → `memory.create_branch`
-- [ ] Rename `graph.add_edge` → `graph.create_edge`
-- [ ] Rename `graph.stats` → `graph.get_stats`
+- [x] Rename `memory.add_event` → `memory.create_event` (AgentCore: `CreateEvent`)
+- [x] Rename `memory.get_events` → `memory.list_events` (AgentCore: `ListEvents`)
+- [x] Rename `memory.delete_expired` → `memory.delete_expired_events`
+- [x] Rename `memory.store` → `memory.create_memory_record` (AgentCore: `CreateMemoryRecord`/`BatchCreateMemoryRecords`); resolves the `memory.store`/`memory.list_stores` noun-verb collision
+- [x] Rename `memory.get` → `memory.get_memory_record` (AgentCore: `GetMemoryRecord`)
+- [x] Rename `memory.list` → `memory.list_memory_records` (AgentCore: `ListMemoryRecords`)
+- [x] Rename `memory.recall` → `memory.retrieve_memory_records` (AgentCore: `RetrieveMemoryRecords`); highest-leverage rename — surfaces "retrieve"/"search" intent
+- [x] Rename `memory.consolidate` → `memory.update_memory_record` (closest AgentCore op: `BatchUpdateMemoryRecords`)
+- [x] Rename `memory.delete` → `memory.delete_memory_record` (AgentCore: `DeleteMemoryRecord`)
+- [x] Rename `memory.checkpoint` → `memory.create_checkpoint`
+- [x] Rename `memory.branch` → `memory.create_branch`
+- [x] Rename `graph.add_edge` → `graph.create_edge`
+- [x] Rename `graph.stats` → `graph.get_stats`
 
 ##### Namespace moves
-- [ ] Move `memory.switch_store` → `store.switch`
-- [ ] Move `memory.current_store` → `store.current`
-- [ ] Move `memory.list_stores` → `store.list`
-- [ ] Move `memory.delete_store` → `store.delete`
+- [x] Move `memory.switch_store` → `store.switch`
+- [x] Move `memory.current_store` → `store.current`
+- [x] Move `memory.list_stores` → `store.list`
+- [x] Move `memory.delete_store` → `store.delete`
 
 ##### Field renames
-- [ ] Rename `memory_id` → `memory_record_id` on `GetMemoryParams`, `ConsolidateParams`, `DeleteMemoryParams`; resolves AgentCore semantic collision (their `memoryId` is the resource, not a record)
-- [ ] Rename `from_memory_id` / `to_memory_id` / `start_memory_id` → `from_memory_record_id` / `to_memory_record_id` / `start_memory_record_id` on graph params
-- [ ] Rename `query` → `search_query` on `memory.retrieve_memory_records` (matches AgentCore `searchQuery`)
-- [ ] Rename `limit` → `top_k` on `memory.retrieve_memory_records` (matches AgentCore `topK`); other tools keep `limit`
+- [x] Rename `memory_id` → `memory_record_id` on `GetMemoryParams`, `ConsolidateParams`, `DeleteMemoryParams`; resolves AgentCore semantic collision (their `memoryId` is the resource, not a record)
+- [x] Rename `from_memory_id` / `to_memory_id` / `start_memory_id` → `from_memory_record_id` / `to_memory_record_id` / `start_memory_record_id` on graph params
+- [x] Rename `query` → `search_query` on `memory.retrieve_memory_records` (matches AgentCore `searchQuery`)
+- [x] Rename `limit` → `top_k` on `memory.retrieve_memory_records` (matches AgentCore `topK`); other tools keep `limit`
 
 ##### Description rewrites (apply to all tools using the parity-doc style guide)
-- [ ] Apply the "Use this when X; use sibling Y instead for Z. … (AgentCore equivalent: Op)" template from `design/agentcore-parity.md` §"Description style guide" to every tool description; worked examples already drafted for `memory.retrieve_memory_records`, `memory.create_memory_record`, `memory.list_events`, `memory.update_memory_record`, `memory.create_event`, `store.switch`, `graph.create_edge`
+- [x] Apply the "Use this when X; use sibling Y instead for Z. … (AgentCore equivalent: Op)" template from `design/agentcore-parity.md` §"Description style guide" to every tool description; worked examples already drafted for `memory.retrieve_memory_records`, `memory.create_memory_record`, `memory.list_events`, `memory.update_memory_record`, `memory.create_event`, `store.switch`, `graph.create_edge`
 
 ##### Source-side cleanup that ships in the same PR
-- [ ] Update `README.md` tool tables (lines 91–151) with v0.2 names
-- [ ] Update tool-name references in `design/DESIGN.md`, `design/mcp-server.md`, `design/memory-tools.md`, `design/event-tools.md`, `design/session-tools.md`, `design/namespace-tools.md`, `design/knowledge-graph.md`, `design/search.md`
-- [ ] Update tool-name references in `tests/integration.rs` and `tests/e2e.rs`
-- [ ] Bump `version` in `Cargo.toml` to `0.2.0`
+- [x] Update `README.md` tool tables with v0.2 names + "Upgrading from v0.1" section
+- [x] Update tool-name references in `design/DESIGN.md`, `design/mcp-server.md`, `design/memory-tools.md`, `design/event-tools.md`, `design/session-tools.md`, `design/namespace-tools.md`, `design/knowledge-graph.md`, `design/search.md`
+- [x] Update tool-name references in `tests/integration.rs` and `tests/e2e.rs`
+- [x] Bump `version` in `Cargo.toml` to `0.2.0`
+- [x] Create `CHANGELOG.md` with v0.2.0 breaking-changes table
 
 ##### Other Tier-2 items (independent of the rename)
 - [ ] R7: Change `metadata` and graph `properties` from `Option<String>` to `Option<serde_json::Value>` so the JSON Schema reflects the actual object shape

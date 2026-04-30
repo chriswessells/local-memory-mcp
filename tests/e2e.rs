@@ -117,23 +117,23 @@ async fn test_e2e_mcp_lifecycle() {
         "expected at least 22 tools, got {}",
         tools.len()
     );
-    // Spot-check memory.add_event has actor_id required
+    // Spot-check memory.create_event has actor_id required
     let add_event_tool = tools
         .iter()
-        .find(|t| t["name"] == "memory.add_event")
+        .find(|t| t["name"] == "memory.create_event")
         .unwrap();
     let required = add_event_tool["inputSchema"]["required"]
         .as_array()
         .unwrap();
     assert!(required.iter().any(|r| r == "actor_id"));
 
-    // tools/call: memory.add_event
+    // tools/call: memory.create_event
     send_request(
         &mut proc,
         3,
         "tools/call",
         tool_call_params(
-            "memory.add_event",
+            "memory.create_event",
             json!({
                 "actor_id": "a1", "session_id": "s1", "event_type": "conversation",
                 "role": "user", "content": "e2e test"
@@ -145,13 +145,13 @@ async fn test_e2e_mcp_lifecycle() {
     let ev = extract_tool_text(&resp);
     assert!(ev["id"].is_string());
 
-    // tools/call: memory.store
+    // tools/call: memory.create_memory_record
     send_request(
         &mut proc,
         4,
         "tools/call",
         tool_call_params(
-            "memory.store",
+            "memory.create_memory_record",
             json!({
                 "actor_id": "a1", "content": "e2e memory", "strategy": "core"
             }),
@@ -162,15 +162,15 @@ async fn test_e2e_mcp_lifecycle() {
     let mem = extract_tool_text(&resp);
     let mem_id = mem["id"].as_str().unwrap().to_string();
 
-    // tools/call: memory.recall
+    // tools/call: memory.retrieve_memory_records
     send_request(
         &mut proc,
         5,
         "tools/call",
         tool_call_params(
-            "memory.recall",
+            "memory.retrieve_memory_records",
             json!({
-                "actor_id": "a1", "query": "e2e"
+                "actor_id": "a1", "search_query": "e2e"
             }),
         ),
     )
@@ -179,13 +179,13 @@ async fn test_e2e_mcp_lifecycle() {
     let results = extract_tool_text(&resp);
     assert!(!results.as_array().unwrap().is_empty());
 
-    // tools/call: graph.add_edge (need two memories)
+    // tools/call: graph.create_edge (need two memories)
     send_request(
         &mut proc,
         6,
         "tools/call",
         tool_call_params(
-            "memory.store",
+            "memory.create_memory_record",
             json!({
                 "actor_id": "a1", "content": "second memory", "strategy": "core"
             }),
@@ -200,9 +200,9 @@ async fn test_e2e_mcp_lifecycle() {
         7,
         "tools/call",
         tool_call_params(
-            "graph.add_edge",
+            "graph.create_edge",
             json!({
-                "actor_id": "a1", "from_memory_id": mem_id, "to_memory_id": mem2_id, "label": "test"
+                "actor_id": "a1", "from_memory_record_id": mem_id, "to_memory_record_id": mem2_id, "label": "test"
             }),
         ),
     )
@@ -217,7 +217,7 @@ async fn test_e2e_mcp_lifecycle() {
         8,
         "tools/call",
         tool_call_params(
-            "memory.add_event",
+            "memory.create_event",
             json!({
                 "actor_id": "", "session_id": "s1", "event_type": "conversation",
                 "role": "user", "content": "bad"
@@ -263,7 +263,7 @@ async fn test_e2e_stderr_logging() {
         2,
         "tools/call",
         tool_call_params(
-            "memory.store",
+            "memory.create_memory_record",
             json!({
                 "actor_id": "a1", "content": "log test", "strategy": "core"
             }),

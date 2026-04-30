@@ -88,40 +88,50 @@ The server is functional with 29 MCP tools, 149 tests, CI/CD, and a one-command 
 - **Namespace hierarchy** — Organize memories in paths like `/user/{actorId}/preferences`
 - **Actor isolation** — All data is scoped by actor ID; actors cannot see each other's data
 
+## Upgrading from v0.1
+
+v0.2 renames 17 tools and 5 fields with no backward-compatible aliases. Use `grep` to find calls to update:
+
+```bash
+grep -rn 'memory\.add_event\|memory\.store\b\|memory\.recall\b\|memory\.get\b\|memory\.list\b\|memory\.consolidate\|memory\.delete\b\|memory\.checkpoint\b\|memory\.branch\b\|memory\.get_events\|memory\.delete_expired\b\|memory\.switch_store\|memory\.current_store\|memory\.list_stores\|memory\.delete_store\|graph\.add_edge\|graph\.stats\b\|"memory_id"\|"from_memory_id"\|"to_memory_id"\|"start_memory_id"' .
+```
+
+See [CHANGELOG.md](CHANGELOG.md) for the full rename table.
+
 ## MCP Tools (29)
 
 ### Short-term memory (events)
 
 | Tool | Description |
 |------|-------------|
-| `memory.add_event` | Store an immutable conversation or blob event |
+| `memory.create_event` | Append an immutable conversation or blob event to a session timeline |
 | `memory.get_event` | Retrieve a single event by ID |
-| `memory.get_events` | Retrieve events for an actor+session with filters |
+| `memory.list_events` | List events for an actor+session with branch filter, time range, and pagination |
 | `memory.list_sessions` | List distinct sessions with event counts and date ranges |
-| `memory.delete_expired` | Remove events past their TTL |
+| `memory.delete_expired_events` | Remove events past their TTL |
 
 ### Long-term memory
 
 | Tool | Description |
 |------|-------------|
-| `memory.store` | Store an extracted insight with optional embedding |
-| `memory.get` | Retrieve a single memory by ID |
-| `memory.recall` | Search by text (FTS5), vector similarity, or hybrid |
-| `memory.consolidate` | Update or invalidate a memory (immutable audit trail) |
-| `memory.list` | List memories with namespace, strategy, and validity filters |
-| `memory.delete` | Hard-delete a memory and its embedding |
+| `memory.create_memory_record` | Create a long-term memory record with optional embedding |
+| `memory.get_memory_record` | Retrieve a single memory record by ID |
+| `memory.retrieve_memory_records` | Search by text (FTS5), vector similarity, or hybrid RRF |
+| `memory.update_memory_record` | Update or invalidate a memory record (immutable audit trail) |
+| `memory.list_memory_records` | List records with namespace, strategy, and validity filters |
+| `memory.delete_memory_record` | Hard-delete a memory record and its embedding |
 
 ### Knowledge graph
 
 | Tool | Description |
 |------|-------------|
-| `graph.add_edge` | Create a directed, labeled relationship between memories |
-| `graph.get_neighbors` | Get directly connected memories |
+| `graph.create_edge` | Create a directed, labeled relationship between memory records |
+| `graph.get_neighbors` | Get directly connected memory records (one hop) |
 | `graph.traverse` | Multi-hop BFS traversal with depth and direction control |
 | `graph.update_edge` | Update an edge's label or properties |
 | `graph.delete_edge` | Delete a relationship |
 | `graph.list_labels` | List distinct edge labels with counts |
-| `graph.stats` | Edge count, label distribution, most-connected memories |
+| `graph.get_stats` | Edge count, label distribution, most-connected memory records |
 
 ### Namespaces
 
@@ -135,8 +145,8 @@ The server is functional with 29 MCP tools, 149 tests, CI/CD, and a one-command 
 
 | Tool | Description |
 |------|-------------|
-| `memory.checkpoint` | Create a named snapshot at a specific event for workflow resumption |
-| `memory.branch` | Fork a conversation from a specific event for alternative paths |
+| `memory.create_checkpoint` | Create a named snapshot at a specific event for workflow resumption |
+| `memory.create_branch` | Fork a conversation from a specific event for alternative paths |
 | `memory.list_checkpoints` | List all checkpoints for a session, ordered by creation time |
 | `memory.list_branches` | List all branches for a session, ordered by creation time |
 
@@ -144,10 +154,10 @@ The server is functional with 29 MCP tools, 149 tests, CI/CD, and a one-command 
 
 | Tool | Description |
 |------|-------------|
-| `memory.switch_store` | Close current store, open another (creates if new) |
-| `memory.current_store` | Return the active store name |
-| `memory.list_stores` | List all stores with file sizes |
-| `memory.delete_store` | Delete a store (cannot delete active) |
+| `store.switch` | Close current store, open another (creates if new) |
+| `store.current` | Return the active store name |
+| `store.list` | List all stores with file sizes |
+| `store.delete` | Delete a store (cannot delete active) |
 
 ## Design Principle: AgentCore Memory Compatibility
 
@@ -155,9 +165,9 @@ An agent with a system prompt should be able to use either AgentCore Memory or l
 
 Same conceptual model, same tool semantics, same data lifecycle. The only transparent differences:
 
-- **Extraction is explicit** — The agent calls `memory.store` instead of extraction happening automatically
+- **Extraction is explicit** — The agent calls `memory.create_memory_record` instead of extraction happening automatically
 - **Embeddings are caller-provided** — The agent provides 384-dim vectors; the server stores and indexes them
-- **Store management is additive** — `memory.switch_store`, `memory.list_stores` are local-only extensions
+- **Store management is additive** — `store.*` tools are a local-only extension
 - **Knowledge graph is additive** — `graph.*` tools are a local-only extension
 
 ## Architecture

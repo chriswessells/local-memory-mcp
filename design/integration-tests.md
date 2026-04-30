@@ -99,70 +99,70 @@ impl Drop for ServerProcess {
 
 ### 1. `test_event_lifecycle` (Critical)
 
-1. `memory.add_event` (conversation) → verify `id`, `actor_id`, `created_at` in response
+1. `memory.create_event` (conversation) → verify `id`, `actor_id`, `created_at` in response
 2. `memory.get_event` → verify same event
-3. `memory.get_events` → verify event in list
+3. `memory.list_events` → verify event in list
 4. `memory.list_sessions` → verify session with event_count=1
-5. `memory.add_event` with `expires_at: "2000-01-01T00:00:00Z"` (far past)
-6. `memory.delete_expired` → verify `{"deleted": 1}`
+5. `memory.create_event` with `expires_at: "2000-01-01T00:00:00Z"` (far past)
+6. `memory.delete_expired_events` → verify `{"deleted": 1}`
 
 ### 2. `test_memory_lifecycle` (Critical)
 
-1. `memory.store` → verify `id`, `is_valid: true`
-2. `memory.get` → verify same memory
-3. `memory.list` → verify memory in list
-4. `memory.consolidate` (update) → verify new memory, old invalid
-5. `memory.list` (valid_only=true) → only new memory
-6. `memory.delete` → `{"deleted": true}`
-7. `memory.get` on deleted → not_found error
+1. `memory.create_memory_record` → verify `id`, `is_valid: true`
+2. `memory.get_memory_record` → verify same memory
+3. `memory.list_memory_records` → verify memory in list
+4. `memory.update_memory_record` (update) → verify new memory, old invalid
+5. `memory.list_memory_records` (valid_only=true) → only new memory
+6. `memory.delete_memory_record` → `{"deleted": true}`
+7. `memory.get_memory_record` on deleted → not_found error
 
 ### 3. `test_recall_fts` (High)
 
 1. Store 3 memories with distinct content
-2. `memory.recall` with text query → verify correct match with score > 0
+2. `memory.retrieve_memory_records` with text query → verify correct match with score > 0
 
 ### 4. `test_graph_lifecycle` (Critical)
 
 1. Store 2 memories
-2. `graph.add_edge` → verify `id`, `label`
+2. `graph.create_edge` → verify `id`, `label`
 3. `graph.get_neighbors` → verify connected memory
 4. `graph.traverse` → verify depth=1 node
 5. `graph.update_edge` → verify label changed
 6. `graph.delete_edge` → `{"deleted": true}`
 7. `graph.list_labels` → verify labels returned
-8. `graph.stats` → verify total_edges count
+8. `graph.get_stats` → verify total_edges count
 
 ### 5. `test_store_isolation` (Critical)
 
 1. Store a memory in default store
-2. `memory.current_store` → verify "default"
-3. `memory.switch_store` to "other"
-4. `memory.list` → verify empty
+2. `store.current` → verify "default"
+3. `store.switch` to "other"
+4. `memory.list_memory_records` → verify empty
 5. Store a memory in "other"
-6. `memory.switch_store` back to "default"
-7. `memory.list` → verify only original memory
-8. `memory.list_stores` → verify both listed
-9. `memory.delete_store` "other" → deleted
+6. `store.switch` back to "default"
+7. `memory.list_memory_records` → verify only original memory
+8. `store.list` → verify both listed
+9. `store.delete` "other" → deleted
 
 ### 6. `test_actor_isolation` (Critical)
 
 1. Store two memories as "alice"
-2. `memory.get` as "bob" with alice's memory ID → not_found
+2. `memory.get_memory_record` as "bob" with alice's memory ID → not_found
 3. Store memory as "bob"
-4. `memory.list` as "alice" → only alice's two memories
+4. `memory.list_memory_records` as "alice" → only alice's two memories
 5. Add edge between alice's two memories
 6. `graph.get_neighbors` as "bob" with alice's memory ID → empty
 
 ### 7. `test_blob_event_roundtrip` (High)
 
-1. `memory.add_event` with event_type=blob, base64 blob_data
+1. `memory.create_event` with event_type=blob, base64 blob_data
 2. `memory.get_event` → verify blob_data matches original base64
 
 ### 8. `test_error_responses` (High)
 
 1. `memory.get_event` nonexistent → `{"code":"not_found",...}`
-2. `memory.store` empty content → `{"code":"invalid_input",...}`
-3. `graph.add_edge` self-edge → `{"code":"invalid_input",...}`
+2. `memory.create_memory_record` empty content → `{"code":"invalid_input",...}`
+3. `graph.create_edge` self-edge → `{"code":"invalid_input",...}`
 
 ---
 
@@ -174,10 +174,10 @@ impl Drop for ServerProcess {
 2. Send `initialize` → verify capabilities (tools listed)
 3. Send `notifications/initialized`
 4. Send `tools/list` → verify 22 tools present, spot-check one tool's `inputSchema` has expected required fields
-5. Send `tools/call` `memory.add_event` → verify success response
-6. Send `tools/call` `memory.store` → verify success (memory family)
-7. Send `tools/call` `memory.recall` with query → verify result (search family)
-8. Send `tools/call` `graph.add_edge` (using memory IDs from steps 5-6) → verify success (graph family)
+5. Send `tools/call` `memory.create_event` → verify success response
+6. Send `tools/call` `memory.create_memory_record` → verify success (memory family)
+7. Send `tools/call` `memory.retrieve_memory_records` with query → verify result (search family)
+8. Send `tools/call` `graph.create_edge` (using memory IDs from steps 5-6) → verify success (graph family)
 9. Send `tools/call` with invalid params → verify `isError: true` in result (not a JSON-RPC error)
 10. Close stdin → verify exit code 0
 
@@ -372,11 +372,11 @@ Task 1 (helpers) must come first. Tasks 2 (integration) and 3 (E2E) can run in p
      ```json
      {"jsonrpc":"2.0","method":"notifications/initialized"}
      ```
-   - `tools/list` → assert 22 tools present (NOTE: update count if tools change), spot-check `memory.add_event` has `actor_id` in inputSchema
-   - `tools/call` `memory.add_event` → response is `{"jsonrpc":"2.0","id":N,"result":{"content":[{"type":"text","text":"..."}]}}`. Parse `result.content[0].text` as JSON, verify has `id`
-   - `tools/call` `memory.store` → verify has `id` (memory family)
-   - `tools/call` `memory.recall` with query → verify result (search family)
-   - `tools/call` `graph.add_edge` (using memory IDs from previous steps) → verify has `id` (graph family)
+   - `tools/list` → assert 22 tools present (NOTE: update count if tools change), spot-check `memory.create_event` has `actor_id` in inputSchema
+   - `tools/call` `memory.create_event` → response is `{"jsonrpc":"2.0","id":N,"result":{"content":[{"type":"text","text":"..."}]}}`. Parse `result.content[0].text` as JSON, verify has `id`
+   - `tools/call` `memory.create_memory_record` → verify has `id` (memory family)
+   - `tools/call` `memory.retrieve_memory_records` with query → verify result (search family)
+   - `tools/call` `graph.create_edge` (using memory IDs from previous steps) → verify has `id` (graph family)
    - `tools/call` with invalid params (empty actor_id) → verify `result.isError` is `true` and `result.content[0].text` contains error JSON (NOT a JSON-RPC error — MCP returns tool errors as successful responses with isError flag)
    - Drop ServerProcess (closes stdin, kills if needed)
 

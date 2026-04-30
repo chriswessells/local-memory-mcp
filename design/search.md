@@ -13,7 +13,7 @@ This component does NOT include:
 - Memory CRUD (Component 3 — already done)
 - Namespace CRUD (Component 7)
 
-**Relationship to `memory.recall`**: The MCP tool `memory.recall` (Component 8) will call `search::recall()` from this component. The recall function orchestrates FTS5-only, vector-only, or hybrid search depending on which parameters the caller provides.
+**Relationship to `memory.retrieve_memory_records`**: The MCP tool `memory.retrieve_memory_records` (Component 8) will call `search::recall()` from this component. The recall function orchestrates FTS5-only, vector-only, or hybrid search depending on which parameters the caller provides.
 
 ---
 

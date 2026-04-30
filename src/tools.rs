@@ -23,19 +23,22 @@ use crate::store::StoreManager;
 const SERVER_INSTRUCTIONS: &str = "\
 local-memory-mcp gives you three layers of persistent, queryable memory:
 
-EVENTS — immutable conversation turns. Use memory.add_event to record each message. \
-Use memory.get_events to retrieve a session's history. Use memory.get_event to fetch one by ID.
+EVENTS — immutable conversation turns. Use memory.create_event to record each message. \
+Use memory.list_events to retrieve a session's history. Use memory.get_event to fetch one by ID.
 
-MEMORIES — long-term records extracted from events. Use memory.store to save an insight \
-or preference. Use memory.recall to search by keyword or semantic similarity. \
-Use memory.list to enumerate memories by namespace. Use memory.get to fetch one by ID.
+MEMORIES — long-term records extracted from events. Use memory.create_memory_record to save an \
+insight or preference. Use memory.retrieve_memory_records to search by keyword or semantic \
+similarity. Use memory.list_memory_records to enumerate memories by namespace. \
+Use memory.get_memory_record to fetch one by ID.
 
-KNOWLEDGE GRAPH — typed edges between memories. Use graph.add_edge to link two memories. \
+KNOWLEDGE GRAPH — typed edges between memories. Use graph.create_edge to link two memories. \
 Use graph.traverse to walk the graph from a starting memory.
 
-actor_id: Every tool requires actor_id. In single-user deployments, pass a constant like \
-\"default\". In multi-user deployments, use a stable per-user identifier (e.g., email hash \
-or UUID). NEVER share actor_id across users — it scopes all data access.
+actor_id: Every tool requires actor_id except the store.* tools, which operate globally. \
+In single-user deployments, pass a constant like \"default\". In multi-user deployments, use a \
+stable per-user identifier (e.g., UUID or opaque per-user token). NEVER share actor_id across \
+users — it scopes all data access. The store.* tools (store.switch, store.current, store.list, \
+store.delete) do not require actor_id.
 
 namespace: A slash-separated path grouping related memories, e.g. \"/user/alice/preferences\" \
 or \"/project/myapp/decisions\". All memories in a namespace are deleted together with \
@@ -49,16 +52,16 @@ embedding: The server does NOT compute embeddings. Pass a caller-computed float 
 omit it to use FTS-only keyword search.
 
 metadata: A JSON object string, e.g. '{\"source\":\"user\",\"confidence\":0.9}'. \
-Stored as-is; filter on it via memory.list.
+Stored as-is; filter on it via memory.list_memory_records.
 
 Intent guide:
-- Record a conversation turn → memory.add_event
-- Save an extracted insight or preference → memory.store
-- Search memories by keyword or meaning → memory.recall
-- Enumerate memories by namespace/strategy → memory.list
-- Fetch one memory by ID → memory.get
-- Link two memories in the knowledge graph → graph.add_edge
-- Walk the knowledge graph → graph.traverse";
+- Record a conversation turn           → memory.create_event
+- Save an extracted insight            → memory.create_memory_record
+- Search memories by keyword or meaning→ memory.retrieve_memory_records
+- Enumerate memories by namespace      → memory.list_memory_records
+- Fetch one memory by ID               → memory.get_memory_record
+- Link two memories in graph           → graph.create_edge
+- Walk the knowledge graph             → graph.traverse";
 
 // --- MemoryServer ---
 
@@ -142,7 +145,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct AddEventParams {
+pub struct CreateEventParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
     #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
@@ -152,7 +155,7 @@ pub struct AddEventParams {
     role: Option<Role>,
     #[serde(default)]
     content: Option<String>,
-    /// Base64-encoded binary data for blob events
+    #[schemars(description = "Base64-encoded binary data. Required when event_type is 'blob'.")]
     #[serde(default)]
     blob_data: Option<String>,
     #[schemars(description = r#"JSON object string, e.g. '{"source":"user"}'. Stored as-is."#)]
@@ -169,17 +172,17 @@ pub struct AddEventParams {
 pub struct GetEventParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the event, returned by memory.add_event or memory.get_events.")]
+    #[schemars(description = "UUID of the event, returned by memory.create_event or memory.list_events.")]
     event_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetEventsToolParams {
+pub struct ListEventsParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
     #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
     session_id: String,
-    /// "all" (default), "main" (main timeline only), or a specific branch ID
+    #[schemars(description = "Branch filter: 'all' (default), 'main' (main timeline only), or a specific branch ID.")]
     #[serde(default)]
     branch_filter: Option<String>,
     #[serde(default)]
@@ -205,7 +208,7 @@ pub struct ListSessionsParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct StoreMemoryParams {
+pub struct CreateMemoryRecordParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
     content: String,
@@ -219,7 +222,6 @@ pub struct StoreMemoryParams {
     metadata: Option<String>,
     #[serde(default)]
     source_session_id: Option<String>,
-    /// 384-dimensional float32 embedding vector
     #[schemars(description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings.")]
     #[schemars(extend("minItems" = 384, "maxItems" = 384))]
     #[serde(default)]
@@ -227,15 +229,15 @@ pub struct StoreMemoryParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetMemoryParams {
+pub struct GetMemoryRecordParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record, returned by memory.store or memory.list.")]
-    memory_id: String,
+    #[schemars(description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records.")]
+    memory_record_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ListMemoriesToolParams {
+pub struct ListMemoryRecordsParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
     #[schemars(description = "Slash-separated path grouping related memories, e.g. '/user/alice/preferences'.")]
@@ -257,16 +259,15 @@ pub struct ListMemoriesToolParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ConsolidateParams {
+pub struct UpdateMemoryRecordParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record, returned by memory.store or memory.list.")]
-    memory_id: String,
+    #[schemars(description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records.")]
+    memory_record_id: String,
     action: ConsolidateActionType,
-    /// Required when action is "update"
+    #[schemars(description = "Replacement content. Required when action is 'update'.")]
     #[serde(default)]
     new_content: Option<String>,
-    /// 384-dimensional float32 embedding vector for the replacement memory
     #[schemars(description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings.")]
     #[schemars(extend("minItems" = 384, "maxItems" = 384))]
     #[serde(default)]
@@ -274,20 +275,20 @@ pub struct ConsolidateParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DeleteMemoryParams {
+pub struct DeleteMemoryRecordParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record, returned by memory.store or memory.list.")]
-    memory_id: String,
+    #[schemars(description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records.")]
+    memory_record_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct RecallToolParams {
+pub struct RetrieveMemoryRecordsParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
+    #[schemars(description = "Keyword query for full-text search. At least one of search_query or embedding must be provided.")]
     #[serde(default)]
-    query: Option<String>,
-    /// 384-dimensional float32 embedding vector
+    search_query: Option<String>,
     #[schemars(description = "Caller-computed float array (384 dims). Omit for FTS-only search. Server does not generate embeddings.")]
     #[schemars(extend("minItems" = 384, "maxItems" = 384))]
     #[serde(default)]
@@ -301,8 +302,9 @@ pub struct RecallToolParams {
     #[schemars(description = "Free-form label for how this memory was produced. Suggested: 'summarization', 'user_preference', 'semantic', 'verbatim', 'extraction'.")]
     #[serde(default)]
     strategy: Option<String>,
+    #[schemars(description = "Maximum number of results to return. Corresponds to AgentCore topK. Default: 10.")]
     #[serde(default)]
-    limit: Option<u32>,
+    top_k: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -318,13 +320,13 @@ pub struct DeleteStoreParams {
 // -- Graph param structs --
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct AddEdgeParams {
+pub struct CreateEdgeParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the source memory record, returned by memory.store.")]
-    from_memory_id: String,
-    #[schemars(description = "UUID of the target memory record, returned by memory.store.")]
-    to_memory_id: String,
+    #[schemars(description = "UUID of the source memory record, returned by memory.create_memory_record.")]
+    from_memory_record_id: String,
+    #[schemars(description = "UUID of the target memory record, returned by memory.create_memory_record.")]
+    to_memory_record_id: String,
     label: String,
     #[schemars(description = r#"JSON object string of edge properties, e.g. '{"weight":0.9}'. Optional."#)]
     #[serde(default)]
@@ -335,9 +337,9 @@ pub struct AddEdgeParams {
 pub struct GetNeighborsParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the memory record, returned by memory.store or memory.list.")]
-    memory_id: String,
-    /// Direction: "out" (default), "in", or "both"
+    #[schemars(description = "UUID of the memory record, returned by memory.create_memory_record or memory.list_memory_records.")]
+    memory_record_id: String,
+    #[schemars(description = "Direction: 'out' (default), 'in', or 'both'.")]
     #[serde(default)]
     direction: Option<Direction>,
     #[serde(default)]
@@ -350,14 +352,14 @@ pub struct GetNeighborsParams {
 pub struct TraverseParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the memory to start traversal from, returned by memory.store or memory.list.")]
-    start_memory_id: String,
-    /// Max traversal depth (default 2, max 5)
+    #[schemars(description = "UUID of the memory record to start traversal from, returned by memory.create_memory_record or memory.list_memory_records.")]
+    start_memory_record_id: String,
+    #[schemars(description = "Maximum traversal depth. Default: 2, max: 5.")]
     #[serde(default)]
     max_depth: Option<u32>,
     #[serde(default)]
     label: Option<String>,
-    /// Direction: "out" (default), "in", or "both"
+    #[schemars(description = "Direction: 'out' (default), 'in', or 'both'.")]
     #[serde(default)]
     direction: Option<Direction>,
 }
@@ -366,12 +368,11 @@ pub struct TraverseParams {
 pub struct UpdateEdgeToolParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the edge, returned by graph.add_edge or graph.get_neighbors.")]
+    #[schemars(description = "UUID of the edge, returned by graph.create_edge or graph.get_neighbors.")]
     edge_id: String,
     #[serde(default)]
     label: Option<String>,
     #[schemars(description = r#"JSON object string of edge properties, e.g. '{"weight":0.9}'. Optional."#)]
-    /// JSON object string for edge properties
     #[serde(default)]
     properties: Option<String>,
 }
@@ -380,7 +381,7 @@ pub struct UpdateEdgeToolParams {
 pub struct DeleteEdgeParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
-    #[schemars(description = "UUID of the edge, returned by graph.add_edge or graph.get_neighbors.")]
+    #[schemars(description = "UUID of the edge, returned by graph.create_edge or graph.get_neighbors.")]
     edge_id: String,
 }
 
@@ -391,15 +392,14 @@ pub struct ListLabelsParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GraphStatsParams {
+pub struct GetStatsParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateNamespaceToolParams {
-    /// Namespace path, e.g. "/user/alice/preferences". Up to 512 bytes (UTF-8).
-    /// Must not contain control characters.
+    #[schemars(description = "Namespace path, e.g. '/user/alice/preferences'. Up to 512 bytes (UTF-8). Must not contain control characters.")]
     #[schemars(length(max = 512))]
     name: String,
     #[serde(default)]
@@ -409,7 +409,7 @@ pub struct CreateNamespaceToolParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListNamespacesToolParams {
-    /// If provided, return only namespaces whose name starts with this prefix.
+    #[schemars(description = "If provided, return only namespaces whose name starts with this prefix.")]
     #[serde(default)]
     prefix: Option<String>,
     #[serde(default)]
@@ -428,14 +428,14 @@ pub struct DeleteNamespaceToolParams {
 // -- Session param structs (Component 6) --
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct CheckpointToolParams {
+pub struct CreateCheckpointParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
     #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
     session_id: String,
     #[schemars(description = "Short label for this checkpoint, e.g. 'before-refactor'. Max 64 chars.")]
     name: String,
-    #[schemars(description = "UUID of the event, returned by memory.add_event or memory.get_events.")]
+    #[schemars(description = "UUID of the event, returned by memory.create_event or memory.list_events.")]
     event_id: String,
     #[schemars(description = r#"JSON object string, e.g. '{"source":"user"}'. Stored as-is."#)]
     #[serde(default)]
@@ -443,12 +443,12 @@ pub struct CheckpointToolParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct BranchToolParams {
+pub struct CreateBranchParams {
     #[schemars(description = "Stable identifier scoping all data access for one user or agent. See server instructions for how to choose.")]
     actor_id: String,
     #[schemars(description = "Identifies the conversation session. Use a stable per-conversation UUID.")]
     session_id: String,
-    #[schemars(description = "UUID of the event, returned by memory.add_event or memory.get_events.")]
+    #[schemars(description = "UUID of the event to fork from, returned by memory.create_event or memory.list_events.")]
     root_event_id: String,
     #[schemars(description = "Name of the new branch, e.g. 'experiment-a'. Max 64 chars.")]
     #[serde(default)]
@@ -529,13 +529,19 @@ fn encode_event_blobs(events: &[Event]) -> Result<Vec<serde_json::Value>, Memory
 #[tool_router]
 impl MemoryServer {
     #[tool(
-        name = "memory.add_event",
-        description = "Store an immutable conversation or blob event in a session timeline. Event type must be 'conversation' (requires content) or 'blob' (requires base64-encoded blob_data). Returns the full event object with generated id and created_at timestamp.",
-        annotations(title = "Add event")
+        name = "memory.create_event",
+        description = "Append an immutable event to a session timeline. Use this for raw \
+                       conversation turns and binary blobs that the agent should later extract \
+                       insights from; use memory.create_memory_record directly for \
+                       already-extracted insights. Event type must be 'conversation' (requires \
+                       content) or 'blob' (requires base64-encoded blob_data). Returns the full \
+                       event with its generated ID and created_at timestamp. \
+                       (AgentCore equivalent: CreateEvent.)",
+        annotations(title = "Create event")
     )]
-    pub async fn add_event(
+    pub async fn create_event(
         &self,
-        Parameters(params): Parameters<AddEventParams>,
+        Parameters(params): Parameters<CreateEventParams>,
     ) -> Result<String, String> {
         let blob_bytes = match &params.blob_data {
             Some(b64) => Some(BASE64.decode(b64).map_err(|e| {
@@ -574,7 +580,10 @@ impl MemoryServer {
 
     #[tool(
         name = "memory.get_event",
-        description = "Fetch a single event by its UUID. Use this when you have an event_id and need the full event object. For all events in a session, use memory.get_events instead.",
+        description = "Fetch a single event by its UUID. Use this when you have an event_id \
+                       and need the full event object; use memory.list_events instead for all \
+                       events in a session. Returns the full event object including blob_data \
+                       (base64-encoded) if present. (AgentCore equivalent: GetEvent.)",
         annotations(title = "Get event", read_only_hint = true)
     )]
     pub async fn get_event(
@@ -590,13 +599,18 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.get_events",
-        description = "List all events in a session, optionally filtered by branch, time window, and pagination. Use this to replay a conversation history. For a single event by ID, use memory.get_event. For a sessions list, use memory.list_sessions. Events are returned oldest first.",
+        name = "memory.list_events",
+        description = "List events for an actor + session, ordered chronologically (oldest \
+                       first). Use this for windowed reads of a conversation timeline; use \
+                       memory.get_event for a single event by ID, and memory.list_sessions to \
+                       enumerate the sessions belonging to an actor. Supports branch filter, \
+                       time range, and limit/offset pagination. \
+                       (AgentCore equivalent: ListEvents.)",
         annotations(title = "List session events", read_only_hint = true)
     )]
-    pub async fn get_events(
+    pub async fn list_events(
         &self,
-        Parameters(params): Parameters<GetEventsToolParams>,
+        Parameters(params): Parameters<ListEventsParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
@@ -618,7 +632,10 @@ impl MemoryServer {
 
     #[tool(
         name = "memory.list_sessions",
-        description = "Enumerate all sessions for an actor, ordered by last event time descending. Use this to discover session IDs. For events within a session, use memory.get_events. Returns session summaries with event counts and date ranges.",
+        description = "Enumerate all sessions for an actor, ordered by last event time \
+                       descending. Use this to discover session IDs; use memory.list_events \
+                       for events within a session. Returns session summaries with event \
+                       counts and date ranges. (AgentCore equivalent: ListSessions.)",
         annotations(title = "List sessions", read_only_hint = true)
     )]
     pub async fn list_sessions(
@@ -638,11 +655,14 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.delete_expired",
-        description = "Delete all events whose expires_at timestamp is in the past. Returns a JSON object with the count of deleted events. This is a maintenance operation with no required parameters.",
+        name = "memory.delete_expired_events",
+        description = "Delete all events whose expires_at timestamp is in the past. Use this \
+                       as a periodic maintenance operation to reclaim storage. No parameters \
+                       required. Returns a JSON object with the count of deleted events. \
+                       (Local-only extension: AgentCore has no automatic-TTL-deletion op.)",
         annotations(title = "Delete expired events", destructive_hint = true)
     )]
-    pub async fn delete_expired(&self) -> Result<String, String> {
+    pub async fn delete_expired_events(&self) -> Result<String, String> {
         self.run(|mgr| {
             let db = mgr.db()?;
             let count = events::delete_expired(db)?;
@@ -652,13 +672,18 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.store",
-        description = "Save an extracted insight, preference, or fact as a long-term memory record. Requires actor_id, content, and strategy. Optionally provide a 384-dim embedding vector for vector search; omit it to use FTS-only search. Returns the full memory object with generated id.",
-        annotations(title = "Store memory")
+        name = "memory.create_memory_record",
+        description = "Create a long-term memory record for an actor. Use this when the agent \
+                       has extracted an insight worth retaining beyond the current session; use \
+                       memory.create_event for raw conversation turns instead. The optional \
+                       384-dim embedding is caller-computed — the server does not generate \
+                       embeddings. Returns the created record with its generated ID. \
+                       (AgentCore equivalent: CreateMemoryRecord / BatchCreateMemoryRecords.)",
+        annotations(title = "Create memory record")
     )]
-    pub async fn store_memory(
+    pub async fn create_memory_record(
         &self,
-        Parameters(params): Parameters<StoreMemoryParams>,
+        Parameters(params): Parameters<CreateMemoryRecordParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
@@ -677,29 +702,38 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.get",
-        description = "Fetch a single memory record by its UUID. Use this when you have a memory_id. To search by content, use memory.recall. To enumerate records by namespace or strategy, use memory.list instead.",
+        name = "memory.get_memory_record",
+        description = "Fetch a single memory record by its UUID. Use this when you have a \
+                       memory_record_id; use memory.retrieve_memory_records to search by \
+                       content, or memory.list_memory_records to enumerate by namespace or \
+                       strategy. Returns the full record including content, strategy, \
+                       namespace, and validity. (AgentCore equivalent: GetMemoryRecord.)",
         annotations(title = "Get memory record", read_only_hint = true)
     )]
-    pub async fn get_memory(
+    pub async fn get_memory_record(
         &self,
-        Parameters(params): Parameters<GetMemoryParams>,
+        Parameters(params): Parameters<GetMemoryRecordParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
-            memories::get_memory(db, &params.actor_id, &params.memory_id)
+            memories::get_memory(db, &params.actor_id, &params.memory_record_id)
         })
         .await
     }
 
     #[tool(
-        name = "memory.list",
-        description = "Enumerate memory records with optional filters (namespace, namespace_prefix, strategy, valid_only). Use this for filtered enumeration when you need all matching records in insertion order. For ranked search by keyword or meaning, use memory.recall instead. Results ordered by created_at descending; supports limit/offset pagination.",
+        name = "memory.list_memory_records",
+        description = "Enumerate memory records with optional filters (namespace, \
+                       namespace_prefix, strategy, valid_only). Use this for filtered \
+                       enumeration when you need all matching records in insertion order; use \
+                       memory.retrieve_memory_records for ranked search by keyword or meaning \
+                       instead. Results ordered by created_at descending; supports limit/offset \
+                       pagination. (AgentCore equivalent: ListMemoryRecords.)",
         annotations(title = "List memory records", read_only_hint = true)
     )]
-    pub async fn list_memories(
+    pub async fn list_memory_records(
         &self,
-        Parameters(params): Parameters<ListMemoriesToolParams>,
+        Parameters(params): Parameters<ListMemoryRecordsParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
@@ -718,13 +752,20 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.consolidate",
-        description = "Supersede a memory record with a new one, preserving an audit trail. The old record is marked invalid; the new one is linked as its successor. Use this to update a preference or correct outdated knowledge. For irreversible hard-delete with no history, use memory.delete instead. Action 'update' requires new_content; action 'invalidate' marks the record invalid with no replacement.",
-        annotations(title = "Consolidate memory")
+        name = "memory.update_memory_record",
+        description = "Update or invalidate a memory record. Use this to supersede an \
+                       outdated record with new content (action 'update' — creates a \
+                       replacement and marks the old one invalid) or to retire a record \
+                       entirely (action 'invalidate' — no replacement). Use \
+                       memory.delete_memory_record instead if you want hard deletion with \
+                       no audit trail. The immutable audit trail of superseded records \
+                       preserves history for replay. (AgentCore equivalent: closest match is \
+                       BatchUpdateMemoryRecords with our additional invalidation semantics.)",
+        annotations(title = "Update memory record")
     )]
-    pub async fn consolidate(
+    pub async fn update_memory_record(
         &self,
-        Parameters(params): Parameters<ConsolidateParams>,
+        Parameters(params): Parameters<UpdateMemoryRecordParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
@@ -733,47 +774,58 @@ impl MemoryServer {
                 params.new_content.as_deref(),
                 params.new_embedding.as_deref(),
             )?;
-            memories::consolidate_memory(db, &params.actor_id, &params.memory_id, &action)
+            memories::consolidate_memory(db, &params.actor_id, &params.memory_record_id, &action)
         })
         .await
     }
 
     #[tool(
-        name = "memory.delete",
-        description = "Hard-delete a memory record and its embedding permanently. No recovery is possible. Use this only when data must be removed entirely. To supersede a record while keeping history, use memory.consolidate instead. Returns {\"deleted\": true} on success.",
+        name = "memory.delete_memory_record",
+        description = "Hard-delete a memory record and its embedding permanently. No recovery \
+                       is possible. Use this only when data must be removed entirely; use \
+                       memory.update_memory_record instead to supersede a record while keeping \
+                       an audit trail. Returns {\"deleted\": true} on success. \
+                       (AgentCore equivalent: DeleteMemoryRecord.)",
         annotations(title = "Delete memory record", destructive_hint = true)
     )]
-    pub async fn delete_memory(
+    pub async fn delete_memory_record(
         &self,
-        Parameters(params): Parameters<DeleteMemoryParams>,
+        Parameters(params): Parameters<DeleteMemoryRecordParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
-            memories::delete_memory(db, &params.actor_id, &params.memory_id)?;
+            memories::delete_memory(db, &params.actor_id, &params.memory_record_id)?;
             Ok(serde_json::json!({ "deleted": true }))
         })
         .await
     }
 
     #[tool(
-        name = "memory.recall",
-        description = "Search memory records by keyword (FTS) or vector similarity, returning results ranked by relevance. Use this to find memories by meaning or content. For filtered enumeration without ranking, use memory.list instead. For a specific record by ID, use memory.get. At least one of query or embedding must be provided.",
-        annotations(title = "Search memories", read_only_hint = true)
+        name = "memory.retrieve_memory_records",
+        description = "Search memory records for an actor by text query, embedding vector, or \
+                       hybrid (Reciprocal Rank Fusion). Use this when you have a query and want \
+                       relevance-ranked results; use memory.list_memory_records instead for \
+                       filtered enumeration. At least one of search_query or embedding must be \
+                       provided. Embeddings are caller-computed 384-dim float32 vectors — the \
+                       server does not generate them. Returns ranked memory records with scores; \
+                       scores are not comparable across modes. \
+                       (AgentCore equivalent: RetrieveMemoryRecords.)",
+        annotations(title = "Retrieve memory records", read_only_hint = true)
     )]
-    pub async fn recall(
+    pub async fn retrieve_memory_records(
         &self,
-        Parameters(params): Parameters<RecallToolParams>,
+        Parameters(params): Parameters<RetrieveMemoryRecordsParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
             let p = RecallParams {
                 actor_id: &params.actor_id,
-                query: params.query.as_deref(),
+                query: params.search_query.as_deref(),
                 embedding: params.embedding.as_deref(),
                 namespace: params.namespace.as_deref(),
                 namespace_prefix: params.namespace_prefix.as_deref(),
                 strategy: params.strategy.as_deref(),
-                limit: params.limit.unwrap_or(10),
+                limit: params.top_k.unwrap_or(10),
             };
             search::recall(db, &p)
         })
@@ -781,8 +833,16 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.switch_store",
-        description = "Switch to a different named store, creating it if it does not exist. The previous store is checkpointed and closed. Store names must be 1-64 alphanumeric characters (plus hyphens/underscores). Idempotent — switching to the already-active store is a no-op.",
+        name = "store.switch",
+        description = "Switch the active SQLite store, creating it if it does not exist. Use \
+                       this to isolate memory across projects, environments, or tenants — each \
+                       store is a separate .db file. The previously active store is \
+                       checkpointed and closed before the switch. Store names must be 1–64 \
+                       alphanumeric characters (plus hyphens/underscores). Idempotent — \
+                       switching to the already-active store is a no-op. Returns the new active \
+                       store name. Does not require actor_id. \
+                       (Local-only extension: AgentCore manages a single memory resource per \
+                       agent.)",
         annotations(title = "Switch store", idempotent_hint = true)
     )]
     pub async fn switch_store(
@@ -797,8 +857,10 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.current_store",
-        description = "Return the name of the currently active store. Returns a JSON object with the store name, or null if no store is open.",
+        name = "store.current",
+        description = "Return the name of the currently active store. Returns a JSON object \
+                       with the store name, or null if no store is open. Does not require \
+                       actor_id. (Local-only extension.)",
         annotations(title = "Current store", read_only_hint = true)
     )]
     pub async fn current_store(&self) -> Result<String, String> {
@@ -810,8 +872,10 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.list_stores",
-        description = "List all stores in the base directory with their names and sizes in bytes. Returns an array of store info objects sorted alphabetically by name.",
+        name = "store.list",
+        description = "List all stores in the base directory with their names and sizes in \
+                       bytes. Returns an array of store info objects sorted alphabetically by \
+                       name. Does not require actor_id. (Local-only extension.)",
         annotations(title = "List stores", read_only_hint = true)
     )]
     pub async fn list_stores(&self) -> Result<String, String> {
@@ -827,8 +891,11 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.delete_store",
-        description = "Delete a named store and its auxiliary files. Cannot delete the currently active store. Returns {\"deleted\": true} on success or an error if the store is active or not found.",
+        name = "store.delete",
+        description = "Delete a named store and its auxiliary files. Cannot delete the \
+                       currently active store. Returns {\"deleted\": true} on success, or an \
+                       error if the store is active or not found. Does not require actor_id. \
+                       (Local-only extension.)",
         annotations(title = "Delete store", destructive_hint = true)
     )]
     pub async fn delete_store(
@@ -846,7 +913,11 @@ impl MemoryServer {
 
     #[tool(
         name = "memory.create_namespace",
-        description = "Register a namespace with optional description. Idempotent — if the namespace already exists, returns the existing entry unchanged. Namespace names are UTF-8 strings up to 512 bytes (e.g., '/user/alice/preferences'). Must not contain control characters.",
+        description = "Register a namespace with optional description. Idempotent — if the \
+                       namespace already exists, returns the existing entry unchanged. Namespace \
+                       names are UTF-8 strings up to 512 bytes, e.g. '/user/alice/preferences'. \
+                       Must not contain control characters. Use memory.delete_namespace to \
+                       bulk-delete all memories in a namespace. (Local-only extension.)",
         annotations(title = "Create namespace", idempotent_hint = true)
     )]
     pub async fn create_namespace(
@@ -867,7 +938,10 @@ impl MemoryServer {
 
     #[tool(
         name = "memory.list_namespaces",
-        description = "List registered namespaces ordered alphabetically. Only namespaces explicitly created via memory.create_namespace are returned — not all namespaces referenced by memories. Supports optional prefix filter and limit/offset pagination.",
+        description = "List registered namespaces ordered alphabetically. Only namespaces \
+                       explicitly created via memory.create_namespace are returned — not all \
+                       namespaces referenced by memories. Supports optional prefix filter and \
+                       limit/offset pagination. (Local-only extension.)",
         annotations(title = "List namespaces", read_only_hint = true)
     )]
     pub async fn list_namespaces(
@@ -889,7 +963,11 @@ impl MemoryServer {
 
     #[tool(
         name = "memory.delete_namespace",
-        description = "Delete all memories belonging to actor_id in the named namespace, clean up their vector rows, and remove the namespace registry entry. Scoped to actor_id — other actors' memories in the same namespace path are not affected. Deletes in chunks to avoid blocking. Returns not_found if the namespace is not registered.",
+        description = "Delete all memories belonging to actor_id in the named namespace, clean \
+                       up their vector rows, and remove the namespace registry entry. Scoped to \
+                       actor_id — other actors' memories in the same namespace path are not \
+                       affected. Deletes in chunks to avoid blocking. Returns not_found if the \
+                       namespace is not registered. (Local-only extension.)",
         annotations(title = "Delete namespace", destructive_hint = true)
     )]
     pub async fn delete_namespace(
@@ -908,20 +986,25 @@ impl MemoryServer {
     // -- Graph tools (Component 5) --
 
     #[tool(
-        name = "graph.add_edge",
-        description = "Create a directed edge between two memories in the knowledge graph. Both memories must belong to the same actor. Self-edges are not allowed. Returns the full edge object with generated id.",
-        annotations(title = "Add edge")
+        name = "graph.create_edge",
+        description = "Create a directed, labeled edge between two memory records. Use this to \
+                       record typed relationships ('supersedes', 'references', 'contradicts') \
+                       between extracted insights for graph traversal. Both records must belong \
+                       to the same actor; self-edges are rejected. Returns the full edge object \
+                       with its generated ID. (Local-only extension: AgentCore Memory does not \
+                       expose a graph layer.)",
+        annotations(title = "Create edge")
     )]
-    pub async fn add_edge(
+    pub async fn create_edge(
         &self,
-        Parameters(params): Parameters<AddEdgeParams>,
+        Parameters(params): Parameters<CreateEdgeParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
             let p = GraphInsertEdgeParams {
                 actor_id: &params.actor_id,
-                from_memory_id: &params.from_memory_id,
-                to_memory_id: &params.to_memory_id,
+                from_memory_id: &params.from_memory_record_id,
+                to_memory_id: &params.to_memory_record_id,
                 label: &params.label,
                 properties: params.properties.as_deref(),
             };
@@ -932,7 +1015,11 @@ impl MemoryServer {
 
     #[tool(
         name = "graph.get_neighbors",
-        description = "Return the direct neighbors (one hop) of a memory in the knowledge graph. Use this to find immediately connected memories. For multi-hop traversal, use graph.traverse instead. Direction: 'out' (default), 'in', or 'both'. Returns edges and connected memories.",
+        description = "Return the direct neighbors (one hop) of a memory record in the \
+                       knowledge graph. Use this to find immediately connected records; use \
+                       graph.traverse instead for multi-hop traversal. Direction: 'out' \
+                       (default), 'in', or 'both'. Returns edges and connected memory records. \
+                       (Local-only extension.)",
         annotations(title = "Get neighbors", read_only_hint = true)
     )]
     pub async fn get_neighbors(
@@ -944,7 +1031,7 @@ impl MemoryServer {
             graph::get_neighbors(
                 db,
                 &params.actor_id,
-                &params.memory_id,
+                &params.memory_record_id,
                 params.direction.unwrap_or_default(),
                 params.label.as_deref(),
                 params.limit.unwrap_or(graph::DEFAULT_NEIGHBOR_LIMIT),
@@ -955,7 +1042,11 @@ impl MemoryServer {
 
     #[tool(
         name = "graph.traverse",
-        description = "Walk the knowledge graph from a starting memory up to a given depth. Use this for multi-hop exploration of connected memories. For direct neighbors only (one hop), use graph.get_neighbors instead. Direction: 'out' (default), 'in', or 'both'. Max depth 5. Returns visited memories with depth and path.",
+        description = "Walk the knowledge graph from a starting memory record up to a given \
+                       depth. Use this for multi-hop exploration of connected memories; use \
+                       graph.get_neighbors instead for direct neighbors only (one hop). \
+                       Direction: 'out' (default), 'in', or 'both'. Max depth 5. Returns \
+                       visited memory records with depth and path. (Local-only extension.)",
         annotations(title = "Traverse graph", read_only_hint = true)
     )]
     pub async fn traverse(
@@ -967,7 +1058,7 @@ impl MemoryServer {
             graph::traverse(
                 db,
                 &params.actor_id,
-                &params.start_memory_id,
+                &params.start_memory_record_id,
                 params.max_depth.unwrap_or(graph::DEFAULT_TRAVERSE_DEPTH),
                 params.label.as_deref(),
                 params.direction.unwrap_or_default(),
@@ -978,7 +1069,10 @@ impl MemoryServer {
 
     #[tool(
         name = "graph.update_edge",
-        description = "Update an edge's label and/or properties. At least one must be provided. Returns the updated edge object.",
+        description = "Update an edge's label and/or properties. At least one of label or \
+                       properties must be provided. Use graph.create_edge to add new edges and \
+                       graph.delete_edge to remove them. Returns the updated edge object. \
+                       (Local-only extension.)",
         annotations(title = "Update edge")
     )]
     pub async fn update_edge(
@@ -1000,7 +1094,8 @@ impl MemoryServer {
 
     #[tool(
         name = "graph.delete_edge",
-        description = "Delete an edge by ID, scoped to the given actor. Returns {\"deleted\": true} on success.",
+        description = "Delete an edge by ID, scoped to the given actor. Returns \
+                       {\"deleted\": true} on success. (Local-only extension.)",
         annotations(title = "Delete edge", destructive_hint = true)
     )]
     pub async fn delete_edge(
@@ -1017,7 +1112,10 @@ impl MemoryServer {
 
     #[tool(
         name = "graph.list_labels",
-        description = "List all distinct edge labels with their counts for the given actor, ordered by count descending.",
+        description = "List all distinct edge labels used by the given actor, with their \
+                       occurrence counts, ordered by count descending. Use this to discover \
+                       what relationship types exist in the graph before traversing. \
+                       (Local-only extension.)",
         annotations(title = "List edge labels", read_only_hint = true)
     )]
     pub async fn list_labels(
@@ -1032,13 +1130,16 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "graph.stats",
-        description = "Get graph statistics for the given actor: total edge count, label distribution, and top 10 most connected memories.",
+        name = "graph.get_stats",
+        description = "Get graph statistics for the given actor: total edge count, label \
+                       distribution, and top 10 most-connected memory records. Use this to \
+                       understand the shape of the knowledge graph before traversal. \
+                       (Local-only extension.)",
         annotations(title = "Graph stats", read_only_hint = true)
     )]
-    pub async fn graph_stats(
+    pub async fn get_stats(
         &self,
-        Parameters(params): Parameters<GraphStatsParams>,
+        Parameters(params): Parameters<GetStatsParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
@@ -1050,16 +1151,17 @@ impl MemoryServer {
     // -- Session tools (Component 6) --
 
     #[tool(
-        name = "memory.checkpoint",
+        name = "memory.create_checkpoint",
         description = "Create a named checkpoint at a specific event within a session. \
                        Checkpoints are named snapshots used for workflow resumption and \
-                       conversation bookmarks. Name must be unique per session. Returns \
-                       the created checkpoint object.",
+                       conversation bookmarks. Name must be unique per session. Use \
+                       memory.list_checkpoints to enumerate existing checkpoints. Returns \
+                       the created checkpoint object. (Local-only extension.)",
         annotations(title = "Create checkpoint")
     )]
-    pub async fn checkpoint(
+    pub async fn create_checkpoint(
         &self,
-        Parameters(params): Parameters<CheckpointToolParams>,
+        Parameters(params): Parameters<CreateCheckpointParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
@@ -1076,16 +1178,17 @@ impl MemoryServer {
     }
 
     #[tool(
-        name = "memory.branch",
+        name = "memory.create_branch",
         description = "Fork a conversation by creating a branch from a specific event. \
-                       Branches enable alternative conversation paths, message editing, \
-                       and what-if scenarios. Returns the created branch object with its ID \
-                       to use as branch_id in memory.add_event.",
+                       Branches enable alternative conversation paths, message editing, and \
+                       what-if scenarios. Returns the created branch object with its ID to use \
+                       as branch_id in memory.create_event. Use memory.list_branches to \
+                       enumerate branches. (Local-only extension.)",
         annotations(title = "Create branch")
     )]
-    pub async fn branch(
+    pub async fn create_branch(
         &self,
-        Parameters(params): Parameters<BranchToolParams>,
+        Parameters(params): Parameters<CreateBranchParams>,
     ) -> Result<String, String> {
         self.run(move |mgr| {
             let db = mgr.db()?;
@@ -1103,8 +1206,9 @@ impl MemoryServer {
 
     #[tool(
         name = "memory.list_checkpoints",
-        description = "List all checkpoints for a session, ordered by creation time. \
-                       Returns an array of checkpoint objects with names and event IDs.",
+        description = "List all checkpoints for a session, ordered by creation time. Returns \
+                       an array of checkpoint objects with names and event IDs. Use \
+                       memory.create_checkpoint to add new checkpoints. (Local-only extension.)",
         annotations(title = "List checkpoints", read_only_hint = true)
     )]
     pub async fn list_checkpoints(
@@ -1126,9 +1230,10 @@ impl MemoryServer {
 
     #[tool(
         name = "memory.list_branches",
-        description = "List branches for a session, ordered by creation time. \
-                       Returns an array of branch objects including their root event IDs \
-                       and optional names. Use the returned branch id as branch_id in memory.add_event.",
+        description = "List branches for a session, ordered by creation time. Returns an array \
+                       of branch objects including their root event IDs and optional names. Use \
+                       the returned branch id as branch_id in memory.create_event. Use \
+                       memory.create_branch to add new branches. (Local-only extension.)",
         annotations(title = "List branches", read_only_hint = true)
     )]
     pub async fn list_branches(
@@ -1308,7 +1413,6 @@ mod tests {
     fn add_test_event(server: &MemoryServer, actor: &str, session: &str) -> String {
         let actor = actor.to_string();
         let session = session.to_string();
-        // Use a blocking call pattern compatible with the test
         let store = server.store.clone();
         let event = std::thread::spawn(move || {
             let mgr = store.lock().unwrap();

@@ -100,6 +100,16 @@ Capture what went wrong, what surprised us, and what we'd do differently.
 
 ---
 
+## From LLM Discoverability Tier 2
+
+- **CI grep catches domain-layer error message strings too.** The validation helpers in `graph.rs` and `memories.rs` pass field names as string literals (`validate_non_empty(memory_id, "memory_id")`). After renaming the MCP wire field `memory_id` → `memory_record_id`, those error message strings also needed updating to match — otherwise the CI grep fails. The error message is the first hint a caller sees when a field is invalid, so it must match the field name they provided.
+
+- **Shell double-quote expansion corrupts Python regex patterns with `\\b`.** When a Python script is passed via `python3 -c "..."` (double-quoted shell string), `\\b` becomes `\b` (Python backspace escape) in the Python source, not a regex word boundary. Use a heredoc (`python3 << 'PYEOF'`) or a file to avoid shell escape interference when embedding regex patterns.
+
+- **Hard renames across 6 layers require a single pass with a CI gate.** The v0.2 rename touched: Rust method names, MCP `name = "..."` strings, param struct names, param struct field names, JSON params in integration tests, JSON tool names in e2e tests, and error message strings in domain modules. Doing it in a single comprehensive pass (one `Write` for tools.rs, one `Write` for integration.rs, targeted edits elsewhere) then verifying with a single CI grep command is more reliable than incremental edits.
+
+---
+
 ## Component 12: Integration & E2E Tests
 
 - **rmcp `#[tool]` macro generates private methods by default.** The first implementation bypassed the tool layer entirely, calling domain functions directly. Code review (5 personas) caught this as Critical — the tests were duplicating unit test coverage instead of testing the integration boundary. Fix: add `pub` to tool methods and param structs, which rmcp supports.

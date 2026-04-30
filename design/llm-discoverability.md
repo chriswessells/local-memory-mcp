@@ -79,19 +79,19 @@ LLMs almost never provide one and fall back to FTS-only search.
 
 ### F4 — Naming collisions hurt tool selection
 
-- **`memory.store` (verb) vs `memory.list_stores` / `memory.switch_store`
-  / `memory.delete_store` (noun).** "Store" means two different things
+- **`memory.create_memory_record` (verb) vs `store.list` / `store.switch`
+  / `store.delete` (noun).** "Store" means two different things
   in this API: save a memory, and a SQLite database file. An LLM
   searching for "store" gets both meanings, and the descriptions don't
   strongly disambiguate. Single biggest naming problem.
-- **`memory.recall` is the search tool but "recall" is AgentCore
+- **`memory.retrieve_memory_records` is the search tool but "recall" is AgentCore
   parlance.** LLMs reaching for "search memory" don't always pick it.
   The description starts with "Search memories…" which helps, but the
   *name* is the strongest signal.
-- **`memory.list` vs `memory.recall` vs `memory.get`** — all feel like
+- **`memory.list_memory_records` vs `memory.retrieve_memory_records` vs `memory.get_memory_record`** — all feel like
   "find memories" without a "use this for X, not Y" discriminator.
-- **Dotted names (`memory.add_event`)** are spec-legal, but some hosts
-  mangle them when prefixing (e.g. `mcp__local-memory__memory.add_event`).
+- **Dotted names (`memory.create_event`)** are spec-legal, but some hosts
+  mangle them when prefixing (e.g. `mcp__local-memory__memory.create_event`).
   Underscore-only names travel better across older or custom harnesses.
 
 ### F5 — No `ToolAnnotations` on any tool
@@ -101,15 +101,15 @@ rmcp supports `ToolAnnotations` (`rmcp/src/handler/server/router/tool.rs:296`,
 `idempotentHint`, `openWorldHint`, `title`. None are set today, so
 hosts treat all 29 tools uniformly:
 
-- read-only tools (`memory.list`, `memory.recall`, `memory.get_event`,
+- read-only tools (`memory.list_memory_records`, `memory.retrieve_memory_records`, `memory.get_event`,
   `memory.list_sessions`, `graph.get_neighbors`, `graph.traverse`,
-  `graph.list_labels`, `graph.stats`, `memory.list_checkpoints`,
-  `memory.list_branches`, `memory.list_namespaces`, `memory.list_stores`,
-  `memory.current_store`) needlessly trigger permission prompts;
-- destructive tools (`memory.delete`, `memory.delete_store`,
-  `memory.delete_namespace`, `memory.delete_expired`,
+  `graph.list_labels`, `graph.get_stats`, `memory.list_checkpoints`,
+  `memory.list_branches`, `memory.list_namespaces`, `store.list`,
+  `store.current`) needlessly trigger permission prompts;
+- destructive tools (`memory.delete_memory_record`, `store.delete`,
+  `memory.delete_namespace`, `memory.delete_expired_events`,
   `graph.delete_edge`) are not flagged for the user;
-- idempotent tools (`memory.create_namespace`, `memory.switch_store`)
+- idempotent tools (`memory.create_namespace`, `store.switch`)
   are not flagged for retry-safe automation.
 
 ### F6 — Tool descriptions are accurate but lack selection guidance
@@ -119,7 +119,7 @@ problem is *picking the right one*. None of the descriptions include:
 
 - "use this when X, not Y" framing for siblings
 - a short concrete example invocation for tools whose param shapes
-  are non-obvious (`memory.recall`, `memory.consolidate`, `graph.traverse`)
+  are non-obvious (`memory.retrieve_memory_records`, `memory.update_memory_record`, `graph.traverse`)
 - any value vocabulary for free-form fields like `strategy`
 
 ---
@@ -145,9 +145,9 @@ Highest leverage, smallest diff. Override:
   - the `strategy` vocabulary (free-form, but suggest AgentCore-style
     values: `summarization`, `user_preference`, `semantic`, …);
   - an intent → tool decision list (e.g. "search memories →
-    `memory.recall`; enumerate by namespace → `memory.list`; record a
-    new conversation turn → `memory.add_event`; save an extracted
-    insight → `memory.store`").
+    `memory.retrieve_memory_records`; enumerate by namespace → `memory.list_memory_records`; record a
+    new conversation turn → `memory.create_event`; save an extracted
+    insight → `memory.create_memory_record`").
 
 ### R2 — Add `#[schemars(description = …)]` to every non-obvious field
 
@@ -168,14 +168,14 @@ Fixes F3. Priorities:
 **Resolved by `design/agentcore-parity.md`** (added 2026-04-28). The
 parity doc commits to moving the four database-management tools into
 a dedicated `store.*` namespace (`store.switch` / `store.current` /
-`store.list` / `store.delete`) and renaming `memory.store` →
+`store.list` / `store.delete`) and renaming `memory.create_memory_record` →
 `memory.create_memory_record`. The verb `store` no longer appears
 anywhere on the surface, eliminating the noun/verb collision.
 
 ### R4 — Surface "search" / "retrieve" as a tool name (F4)
 
 **Resolved by `design/agentcore-parity.md`** (added 2026-04-28). The
-parity doc renames `memory.recall` → `memory.retrieve_memory_records`,
+parity doc renames `memory.retrieve_memory_records` → `memory.retrieve_memory_records`,
 matching AgentCore's exact verb (`RetrieveMemoryRecords`). The first
 sentence of the description leads with "Search memory records…" so
 both "retrieve" and "search" are visible to LLM tool-selection.
@@ -220,7 +220,7 @@ way in is unchanged.
 
 ### R8 — Replace dots with underscores in tool names
 
-Optional but improves cross-host portability (F4). `memory.add_event`
+Optional but improves cross-host portability (F4). `memory.create_event`
 → `memory_add_event`, `graph.traverse` → `graph_traverse`. If we keep
 dots for AgentCore parity, document the requirement explicitly in the
 README and confirm the chosen target hosts handle them.
@@ -286,21 +286,21 @@ The `#[tool]` macro supports `annotations` directly
 
 ```rust
 #[tool(
-    name = "memory.recall",
+    name = "memory.retrieve_memory_records",
     description = "...",
     annotations(title = "Search memories", read_only_hint = true)
 )]
 async fn recall(&self, ...) { ... }
 
 #[tool(
-    name = "memory.delete",
+    name = "memory.delete_memory_record",
     description = "...",
     annotations(title = "Delete memory record", destructive_hint = true)
 )]
 async fn delete_memory(&self, ...) { ... }
 
 #[tool(
-    name = "memory.switch_store",
+    name = "store.switch",
     description = "...",
     annotations(title = "Switch store", idempotent_hint = true)
 )]
@@ -338,14 +338,14 @@ Draft instructions text (200–300 words):
 ```
 local-memory-mcp gives you three layers of persistent, queryable memory:
 
-EVENTS — immutable conversation turns. Use memory.add_event to record each message.
-  Use memory.get_events to retrieve a session's history.
+EVENTS — immutable conversation turns. Use memory.create_event to record each message.
+  Use memory.list_events to retrieve a session's history.
 
-MEMORIES — long-term records extracted from events. Use memory.store to save an insight
-  or preference. Use memory.recall to search by keyword or semantic similarity.
-  Use memory.list to enumerate memories by namespace. Use memory.get to fetch one by ID.
+MEMORIES — long-term records extracted from events. Use memory.create_memory_record to save an insight
+  or preference. Use memory.retrieve_memory_records to search by keyword or semantic similarity.
+  Use memory.list_memory_records to enumerate memories by namespace. Use memory.get_memory_record to fetch one by ID.
 
-KNOWLEDGE GRAPH — typed edges between memories. Use graph.add_edge to link two memories.
+KNOWLEDGE GRAPH — typed edges between memories. Use graph.create_edge to link two memories.
   Use graph.traverse to walk the graph from a starting memory.
 
 actor_id: Every tool requires actor_id. In single-user deployments, pass a constant like
@@ -363,7 +363,7 @@ embedding: The server does NOT compute embeddings. Pass a caller-computed EMBEDD
   float array to enable vector search; omit it to use FTS-only keyword search.
 
 metadata: A JSON object string, e.g. '{"source":"user","confidence":0.9}'. The server
-  stores it as-is; filter on it via memory.list.
+  stores it as-is; filter on it via memory.list_memory_records.
 ```
 
 ### Field description policy — single source of truth (resolves M2)
@@ -387,18 +387,18 @@ the Tier 2 spec; the names will update when Tier 2 lands.
 
 | Annotation | v0.1 Tool Names |
 |---|---|
-| `readOnlyHint=true` | `memory.get_event`, `memory.get_events`, `memory.list_sessions`, `memory.get`, `memory.list`, `memory.recall`, `memory.current_store`, `memory.list_stores`, `memory.list_namespaces`, `graph.get_neighbors`, `graph.traverse`, `graph.list_labels`, `graph.stats`, `memory.list_checkpoints`, `memory.list_branches` |
-| `destructiveHint=true` | `memory.delete`, `memory.delete_expired`, `memory.delete_store`, `memory.delete_namespace`, `graph.delete_edge` |
-| `idempotentHint=true` | `memory.create_namespace`, `memory.switch_store` |
+| `readOnlyHint=true` | `memory.get_event`, `memory.list_events`, `memory.list_sessions`, `memory.get_memory_record`, `memory.list_memory_records`, `memory.retrieve_memory_records`, `store.current`, `store.list`, `memory.list_namespaces`, `graph.get_neighbors`, `graph.traverse`, `graph.list_labels`, `graph.get_stats`, `memory.list_checkpoints`, `memory.list_branches` |
+| `destructiveHint=true` | `memory.delete_memory_record`, `memory.delete_expired_events`, `store.delete`, `memory.delete_namespace`, `graph.delete_edge` |
+| `idempotentHint=true` | `memory.create_namespace`, `store.switch` |
 
 Tools with no behavioral annotation (write, non-idempotent, non-destructive):
-`memory.add_event`, `memory.store`, `memory.consolidate`, `graph.add_edge`, `graph.update_edge`,
-`memory.checkpoint`, `memory.branch`. Add only `title` to these.
+`memory.create_event`, `memory.create_memory_record`, `memory.update_memory_record`, `graph.create_edge`, `graph.update_edge`,
+`memory.create_checkpoint`, `memory.create_branch`. Add only `title` to these.
 
 Every tool gets a `title` (short human label). Example titles:
-`memory.add_event` → "Add event", `memory.store` → "Store memory",
-`memory.recall` → "Search memories", `memory.delete` → "Delete memory record",
-`memory.switch_store` → "Switch store", `graph.traverse` → "Traverse graph".
+`memory.create_event` → "Add event", `memory.create_memory_record` → "Store memory",
+`memory.retrieve_memory_records` → "Search memories", `memory.delete_memory_record` → "Delete memory record",
+`store.switch` → "Switch store", `graph.traverse` → "Traverse graph".
 
 ### R6 — Tier 1 discriminator pairs (v0.1 names) (resolves INTEROP-1)
 
@@ -407,11 +407,11 @@ The design's worked examples (in `agentcore-parity.md`) use v0.2 names — trans
 
 | Sibling pair | Discriminator guidance |
 |---|---|
-| `memory.list` ↔ `memory.recall` | list = filtered enumeration by namespace/strategy (no ranking); recall = ranked search by keyword or vector similarity. Use `memory.list` to enumerate all; use `memory.recall` to search. |
-| `memory.get` ↔ `memory.list` ↔ `memory.recall` | get = fetch one record by ID; list = enumerate many; recall = search/rank. |
-| `memory.get_event` ↔ `memory.get_events` ↔ `memory.list_sessions` | get_event = one event by ID; get_events = all events in one session; list_sessions = enumerate sessions for an actor. |
+| `memory.list_memory_records` ↔ `memory.retrieve_memory_records` | list = filtered enumeration by namespace/strategy (no ranking); recall = ranked search by keyword or vector similarity. Use `memory.list_memory_records` to enumerate all; use `memory.retrieve_memory_records` to search. |
+| `memory.get_memory_record` ↔ `memory.list_memory_records` ↔ `memory.retrieve_memory_records` | get = fetch one record by ID; list = enumerate many; recall = search/rank. |
+| `memory.get_event` ↔ `memory.list_events` ↔ `memory.list_sessions` | get_event = one event by ID; get_events = all events in one session; list_sessions = enumerate sessions for an actor. |
 | `graph.get_neighbors` ↔ `graph.traverse` | get_neighbors = one hop (direct edges); traverse = multi-hop depth-first with depth limit. |
-| `memory.consolidate` ↔ `memory.delete` | consolidate = supersede with audit trail (old memory marked invalid, new one created); delete = hard delete with no recovery. |
+| `memory.update_memory_record` ↔ `memory.delete_memory_record` | consolidate = supersede with audit trail (old memory marked invalid, new one created); delete = hard delete with no recovery. |
 
 ---
 

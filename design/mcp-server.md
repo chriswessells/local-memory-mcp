@@ -303,34 +303,34 @@ struct DeleteStoreParams {
 
 ### Tool naming
 
-All tools use dotted names per DESIGN.md: `memory.add_event`, `memory.recall`, etc. rmcp validates tool names allow dots (confirmed in `tool_name_validation.rs`).
+All tools use dotted names per DESIGN.md: `memory.create_event`, `memory.retrieve_memory_records`, etc. rmcp validates tool names allow dots (confirmed in `tool_name_validation.rs`).
 
 ### Tool list (this component)
 
 | Tool Name | Handler | Business Logic |
 |-----------|---------|----------------|
-| `memory.add_event` | `add_event` | `events::add_event` |
+| `memory.create_event` | `add_event` | `events::add_event` |
 | `memory.get_event` | `get_event` | `events::get_event` |
-| `memory.get_events` | `get_events` | `events::get_events` |
+| `memory.list_events` | `get_events` | `events::get_events` |
 | `memory.list_sessions` | `list_sessions` | `events::list_sessions` |
-| `memory.delete_expired` | `delete_expired` | `events::delete_expired` |
-| `memory.store` | `store_memory` | `memories::store_memory` |
-| `memory.get` | `get_memory` | `memories::get_memory` |
-| `memory.list` | `list_memories` | `memories::list_memories` |
-| `memory.consolidate` | `consolidate` | `memories::consolidate_memory` |
-| `memory.delete` | `delete_memory` | `memories::delete_memory` |
-| `memory.recall` | `recall` | `search::recall` |
-| `memory.switch_store` | `switch_store` | `StoreManager::switch` |
-| `memory.current_store` | `current_store` | `StoreManager::active_name` |
-| `memory.list_stores` | `list_stores` | `StoreManager::list` |
-| `memory.delete_store` | `delete_store` | `StoreManager::delete` |
+| `memory.delete_expired_events` | `delete_expired` | `events::delete_expired` |
+| `memory.create_memory_record` | `store_memory` | `memories::store_memory` |
+| `memory.get_memory_record` | `get_memory` | `memories::get_memory` |
+| `memory.list_memory_records` | `list_memories` | `memories::list_memories` |
+| `memory.update_memory_record` | `consolidate` | `memories::consolidate_memory` |
+| `memory.delete_memory_record` | `delete_memory` | `memories::delete_memory` |
+| `memory.retrieve_memory_records` | `recall` | `search::recall` |
+| `store.switch` | `switch_store` | `StoreManager::switch` |
+| `store.current` | `current_store` | `StoreManager::active_name` |
+| `store.list` | `list_stores` | `StoreManager::list` |
+| `store.delete` | `delete_store` | `StoreManager::delete` |
 
 ### Tool handler pattern
 
 Each tool method follows the same pattern:
 
 ```rust
-#[tool(name = "memory.add_event", description = "Store an immutable conversation or blob event")]
+#[tool(name = "memory.create_event", description = "Store an immutable conversation or blob event")]
 async fn add_event(&self, Parameters(params): Parameters<AddEventParams>) -> String {
     self.run(|mgr| {
         let db = mgr.db()?;
@@ -398,7 +398,7 @@ impl MemoryServer {
 
 `switch` and `delete` need `&mut StoreManager` (not `&dyn Db`). The `run` helper already passes `&mut StoreManager`, so these tools call store methods directly.
 
-### `memory.current_store` — no params
+### `store.current` — no params
 
 Uses `self.run(|mgr| { ... })` with no `Parameters<T>` extraction.
 }
@@ -676,32 +676,32 @@ cargo clippy -- -D warnings
 
 ### Tool implementation details
 
-**`memory.add_event`**: Map `AddEventParams` fields to `InsertEventParams` references. Call `events::add_event(db, &p)`.
+**`memory.create_event`**: Map `AddEventParams` fields to `InsertEventParams` references. Call `events::add_event(db, &p)`.
 
 **`memory.get_event`**: Call `events::get_event(db, &params.actor_id, &params.event_id)`.
 
-**`memory.get_events`**: Parse `branch_filter` string to `BranchFilter` enum. Map to `events::GetEventsParams`. Call `events::get_events(db, &p)`.
+**`memory.list_events`**: Parse `branch_filter` string to `BranchFilter` enum. Map to `events::GetEventsParams`. Call `events::get_events(db, &p)`.
 
 **`memory.list_sessions`**: Call `events::list_sessions(db, &params.actor_id, limit, offset)`.
 
-**`memory.delete_expired`**: Call `events::delete_expired(db)`. Return `{"deleted": count}`.
+**`memory.delete_expired_events`**: Call `events::delete_expired(db)`. Return `{"deleted": count}`.
 
-**`memory.store`**: Map to `InsertMemoryParams`. For `embedding`, convert `Option<Vec<f32>>` to `Option<&[f32]>` via `.as_deref()`. Call `memories::store_memory(db, &p)`.
+**`memory.create_memory_record`**: Map to `InsertMemoryParams`. For `embedding`, convert `Option<Vec<f32>>` to `Option<&[f32]>` via `.as_deref()`. Call `memories::store_memory(db, &p)`.
 
-**`memory.get`**: Call `memories::get_memory(db, &params.actor_id, &params.memory_id)`.
+**`memory.get_memory_record`**: Call `memories::get_memory(db, &params.actor_id, &params.memory_id)`.
 
-**`memory.list`**: Map to `ListMemoriesParams`. Call `memories::list_memories(db, &p)`.
+**`memory.list_memory_records`**: Map to `ListMemoriesParams`. Call `memories::list_memories(db, &p)`.
 
-**`memory.consolidate`**: Parse `action` string + `new_content` + `new_embedding` into `ConsolidateAction`. Call `memories::consolidate_memory(db, &actor_id, &memory_id, &action)`.
+**`memory.update_memory_record`**: Parse `action` string + `new_content` + `new_embedding` into `ConsolidateAction`. Call `memories::consolidate_memory(db, &actor_id, &memory_id, &action)`.
 
-**`memory.delete`**: Call `memories::delete_memory(db, &params.actor_id, &params.memory_id)`. Return `{"deleted": true}`.
+**`memory.delete_memory_record`**: Call `memories::delete_memory(db, &params.actor_id, &params.memory_id)`. Return `{"deleted": true}`.
 
-**`memory.recall`**: Map to `RecallParams`. Call `search::recall(db, &p)`.
+**`memory.retrieve_memory_records`**: Map to `RecallParams`. Call `search::recall(db, &p)`.
 
-**`memory.switch_store`**: Call `mgr.switch(&params.name)`. Return `{"store": name}`.
+**`store.switch`**: Call `mgr.switch(&params.name)`. Return `{"store": name}`.
 
-**`memory.current_store`**: Call `mgr.active_name()`. Return `{"store": name}`.
+**`store.current`**: Call `mgr.active_name()`. Return `{"store": name}`.
 
-**`memory.list_stores`**: Call `mgr.list()`. Return the vec directly.
+**`store.list`**: Call `mgr.list()`. Return the vec directly.
 
-**`memory.delete_store`**: Call `mgr.delete(&params.name)`. Return `{"deleted": true}`.
+**`store.delete`**: Call `mgr.delete(&params.name)`. Return `{"deleted": true}`.

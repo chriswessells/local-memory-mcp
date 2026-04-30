@@ -10,12 +10,12 @@ Long-term memory operations: store, get, consolidate, list, and delete memories.
 
 This component does NOT include:
 - MCP tool definitions (Component 8)
-- FTS5/vector search via `memory.recall` (Component 4 — Search)
+- FTS5/vector search via `memory.retrieve_memory_records` (Component 4 — Search)
 - Namespace CRUD (Component 7 — Namespace tools)
 
-**Note on recall**: The `memory.recall` MCP tool combines FTS5 and vector search. That logic lives in Component 4 (Search). This component provides the basic CRUD that recall depends on.
+**Note on recall**: The `memory.retrieve_memory_records` MCP tool combines FTS5 and vector search. That logic lives in Component 4 (Search). This component provides the basic CRUD that recall depends on.
 
-**Note on embeddings**: `memory.store` accepts an optional `embedding` parameter. The Db layer stores the embedding in `memory_vec` as part of `insert_memory`. This keeps the insert atomic — the memory and its embedding are created in the same transaction. Component 4 handles the *query* side (searching `memory_vec`).
+**Note on embeddings**: `memory.create_memory_record` accepts an optional `embedding` parameter. The Db layer stores the embedding in `memory_vec` as part of `insert_memory`. This keeps the insert atomic — the memory and its embedding are created in the same transaction. Component 4 handles the *query* side (searching `memory_vec`).
 
 ---
 

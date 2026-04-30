@@ -8,7 +8,7 @@ This component adds:
 - `Edge` data type and supporting structs
 - 7 `Db` trait methods for graph operations
 - `graph.rs` business logic layer with validation
-- 7 MCP tools (`graph.add_edge`, `graph.get_neighbors`, `graph.traverse`, `graph.update_edge`, `graph.delete_edge`, `graph.list_labels`, `graph.stats`)
+- 7 MCP tools (`graph.create_edge`, `graph.get_neighbors`, `graph.traverse`, `graph.update_edge`, `graph.delete_edge`, `graph.list_labels`, `graph.get_stats`)
 
 ---
 
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_edges_to ON knowledge_edges(to_memory_id, label);
 CREATE INDEX IF NOT EXISTS idx_edges_label ON knowledge_edges(label);
 ```
 
-The `ON DELETE CASCADE` on both FKs means deleting a memory (via `memory.delete`) automatically removes all edges referencing it. No additional cleanup needed in graph.rs.
+The `ON DELETE CASCADE` on both FKs means deleting a memory (via `memory.delete_memory_record`) automatically removes all edges referencing it. No additional cleanup needed in graph.rs.
 
 ---
 
@@ -420,7 +420,7 @@ pub fn graph_stats(db: &dyn Db) -> Result<GraphStats, MemoryError>;
 
 ## MCP Tool Definitions
 
-### graph.add_edge
+### graph.create_edge
 
 ```rust
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -510,7 +510,7 @@ No parameters.
 
 Returns: array of `LabelCount` objects.
 
-### graph.stats
+### graph.get_stats
 
 No parameters.
 
@@ -537,7 +537,7 @@ Returns: `GraphStats` object.
 
 1. **Duplicate edges**: Allowed. Two edges with the same from/to/label can exist (different IDs). This supports multiple relationships of the same type (e.g., two "depends_on" edges with different properties).
 2. **Edges to invalid memories**: Allowed. The FK references `memories(id)`, not filtered by `is_valid`. An edge to an invalidated memory still exists and is traversable. The agent can check `memory.is_valid` in results.
-3. **Cascading delete**: When a memory is hard-deleted via `memory.delete`, `ON DELETE CASCADE` removes all edges referencing it. This is the correct behavior — the memory and its relationships are gone.
+3. **Cascading delete**: When a memory is hard-deleted via `memory.delete_memory_record`, `ON DELETE CASCADE` removes all edges referencing it. This is the correct behavior — the memory and its relationships are gone.
 4. **Consolidation**: When a memory is consolidated (update), the old memory is marked invalid but NOT deleted. Its edges remain. The new memory has no edges. The agent should re-link the new memory if needed. This is documented behavior.
 5. **Empty graph**: `list_labels` returns `[]`. `graph_stats` returns `{total_edges: 0, labels: [], most_connected: []}`.
 6. **Traversal cycle detection**: The recursive CTE tracks visited nodes in a JSON array. A node already in the visited set is not re-expanded. This prevents infinite loops in cyclic graphs.

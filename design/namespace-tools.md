@@ -52,7 +52,7 @@ Namespace CRUD operations exposed as MCP tools. This component adds:
 6. **Module wiring** — `pub mod namespaces` in `src/lib.rs`
 
 This component does NOT include:
-- Namespace filtering in `memory.list` or `memory.recall` — that already exists in Component 3/4
+- Namespace filtering in `memory.list_memory_records` or `memory.retrieve_memory_records` — that already exists in Component 3/4
 - Deletion of memories across sub-namespace prefixes — `delete_namespace` is exact-match only
 - Schema changes — the `namespaces` table already exists in migration v1
 
