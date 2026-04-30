@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{Db, EMBEDDING_DIM};
 use crate::error::MemoryError;
-use crate::events::{MAX_ACTOR_ID_LEN, MAX_METADATA_SIZE, MAX_PAGE_LIMIT};
+use crate::events::{
+    json_value_depth, MAX_ACTOR_ID_LEN, MAX_METADATA_DEPTH, MAX_METADATA_KEYS, MAX_METADATA_SIZE,
+    MAX_PAGE_LIMIT,
+};
 
 // --- Constants ---
 
@@ -19,7 +22,7 @@ pub struct Memory {
     pub namespace: String,
     pub strategy: String,
     pub content: String,
-    pub metadata: Option<String>,
+    pub metadata: Option<serde_json::Value>,
     pub source_session_id: Option<String>,
     pub is_valid: bool,
     pub superseded_by: Option<String>,
@@ -33,7 +36,7 @@ pub struct InsertMemoryParams<'a> {
     pub content: &'a str,
     pub strategy: &'a str,
     pub namespace: Option<&'a str>,
-    pub metadata: Option<&'a str>,
+    pub metadata: Option<serde_json::Value>,
     pub source_session_id: Option<&'a str>,
     pub embedding: Option<&'a [f32]>,
 }
@@ -81,6 +84,15 @@ fn validate_max_len(value: &str, max: usize, field: &str) -> Result<(), MemoryEr
     Ok(())
 }
 
+fn validate_json_object_value(v: &serde_json::Value, field: &str) -> Result<(), MemoryError> {
+    if !v.is_object() {
+        return Err(MemoryError::InvalidInput(format!(
+            "{field} must be a JSON object"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_insert_memory_params(params: &InsertMemoryParams<'_>) -> Result<(), MemoryError> {
     validate_non_empty(params.actor_id, "actor_id")?;
     validate_max_len(params.actor_id, MAX_ACTOR_ID_LEN, "actor_id")?;
@@ -92,15 +104,25 @@ fn validate_insert_memory_params(params: &InsertMemoryParams<'_>) -> Result<(), 
     if let Some(ns) = params.namespace {
         crate::namespaces::validate_namespace_name(ns)?;
     }
-    if let Some(metadata) = params.metadata {
-        validate_max_len(metadata, MAX_METADATA_SIZE, "metadata")?;
-        match serde_json::from_str::<serde_json::Value>(metadata) {
-            Ok(v) if v.is_object() => {}
-            _ => {
-                return Err(MemoryError::InvalidInput(
-                    "metadata must be a valid JSON object".into(),
-                ));
-            }
+    if let Some(ref v) = params.metadata {
+        validate_json_object_value(v, "metadata")?;
+        let obj = v.as_object().expect("validated as object above");
+        if obj.len() > MAX_METADATA_KEYS {
+            return Err(MemoryError::InvalidInput(format!(
+                "metadata exceeds maximum of {MAX_METADATA_KEYS} keys"
+            )));
+        }
+        if json_value_depth(v) > MAX_METADATA_DEPTH {
+            return Err(MemoryError::InvalidInput(format!(
+                "metadata exceeds maximum nesting depth of {MAX_METADATA_DEPTH}"
+            )));
+        }
+        let serialized =
+            serde_json::to_string(v).expect("serde_json::Value is always serializable");
+        if serialized.len() > MAX_METADATA_SIZE {
+            return Err(MemoryError::InvalidInput(format!(
+                "metadata exceeds maximum length of {MAX_METADATA_SIZE} bytes"
+            )));
         }
     }
     if let Some(sid) = params.source_session_id {

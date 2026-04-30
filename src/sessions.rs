@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
 use crate::error::MemoryError;
-use crate::events::{MAX_ACTOR_ID_LEN, MAX_METADATA_SIZE, MAX_SESSION_ID_LEN};
+use crate::events::{
+    json_value_depth, MAX_ACTOR_ID_LEN, MAX_METADATA_DEPTH, MAX_METADATA_KEYS, MAX_METADATA_SIZE,
+    MAX_SESSION_ID_LEN,
+};
 
 // --- Constants ---
 
@@ -23,7 +26,7 @@ pub struct Checkpoint {
     pub actor_id: String,
     pub name: String,
     pub event_id: String,
-    pub metadata: Option<String>,
+    pub metadata: Option<serde_json::Value>,
     pub created_at: String,
 }
 
@@ -45,7 +48,7 @@ pub struct InsertCheckpointParams<'a> {
     pub session_id: &'a str,
     pub name: &'a str,
     pub event_id: &'a str,
-    pub metadata: Option<&'a str>,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,11 +106,13 @@ fn validate_no_control_chars(s: &str, field: &str) -> Result<(), MemoryError> {
     Ok(())
 }
 
-fn validate_metadata_json(s: &str) -> Result<(), MemoryError> {
-    serde_json::from_str::<serde_json::Value>(s)
-        .ok()
-        .and_then(|v| v.as_object().map(|_| ()))
-        .ok_or_else(|| MemoryError::InvalidInput("metadata must be a JSON object".into()))
+fn validate_json_object_value(v: &serde_json::Value, field: &str) -> Result<(), MemoryError> {
+    if !v.is_object() {
+        return Err(MemoryError::InvalidInput(format!(
+            "{field} must be a JSON object"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_checkpoint_params(params: &InsertCheckpointParams<'_>) -> Result<(), MemoryError> {
@@ -120,9 +125,26 @@ fn validate_checkpoint_params(params: &InsertCheckpointParams<'_>) -> Result<(),
     validate_no_control_chars(params.name, "name")?;
     validate_non_empty(params.event_id, "event_id")?;
     validate_max_len(params.event_id, MAX_UUID_LEN, "event_id")?;
-    if let Some(metadata) = params.metadata {
-        validate_max_len(metadata, MAX_METADATA_SIZE, "metadata")?;
-        validate_metadata_json(metadata)?;
+    if let Some(ref v) = params.metadata {
+        validate_json_object_value(v, "metadata")?;
+        let obj = v.as_object().expect("validated as object above");
+        if obj.len() > MAX_METADATA_KEYS {
+            return Err(MemoryError::InvalidInput(format!(
+                "metadata exceeds maximum of {MAX_METADATA_KEYS} keys"
+            )));
+        }
+        if json_value_depth(v) > MAX_METADATA_DEPTH {
+            return Err(MemoryError::InvalidInput(format!(
+                "metadata exceeds maximum nesting depth of {MAX_METADATA_DEPTH}"
+            )));
+        }
+        let serialized =
+            serde_json::to_string(v).expect("serde_json::Value is always serializable");
+        if serialized.len() > MAX_METADATA_SIZE {
+            return Err(MemoryError::InvalidInput(format!(
+                "metadata exceeds maximum length of {MAX_METADATA_SIZE} bytes"
+            )));
+        }
     }
     Ok(())
 }
@@ -238,7 +260,7 @@ mod tests {
     #[test]
     fn test_validate_metadata_not_object() {
         let params = InsertCheckpointParams {
-            metadata: Some("[]"),
+            metadata: Some(serde_json::json!([])),
             ..make_checkpoint_params("actor1", "session1", "cp1", "event-id-1234567890123")
         };
         let err = validate_checkpoint_params(&params).unwrap_err();
@@ -250,7 +272,7 @@ mod tests {
     #[test]
     fn test_validate_metadata_invalid_json() {
         let params = InsertCheckpointParams {
-            metadata: Some("not json"),
+            metadata: Some(serde_json::json!("not an object")),
             ..make_checkpoint_params("actor1", "session1", "cp1", "event-id-1234567890123")
         };
         let err = validate_checkpoint_params(&params).unwrap_err();

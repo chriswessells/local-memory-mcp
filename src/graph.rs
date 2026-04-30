@@ -2,12 +2,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
 use crate::error::MemoryError;
+use crate::events::{json_value_depth, MAX_METADATA_DEPTH, MAX_METADATA_KEYS, MAX_METADATA_SIZE};
 use crate::memories::Memory;
 
 // --- Constants ---
 
 pub const MAX_LABEL_LEN: usize = 256;
-pub const MAX_PROPERTIES_SIZE: usize = 65_536;
+pub const MAX_PROPERTIES_SIZE: usize = MAX_METADATA_SIZE;
+pub const MAX_PROPERTIES_KEYS: usize = MAX_METADATA_KEYS;
+pub const MAX_PROPERTIES_DEPTH: usize = MAX_METADATA_DEPTH;
 pub const MAX_EDGE_ID_LEN: usize = 256;
 pub const MAX_MEMORY_ID_LEN: usize = 256;
 pub const MAX_TRAVERSE_DEPTH: u32 = 5;
@@ -23,7 +26,7 @@ pub struct Edge {
     pub from_memory_id: String,
     pub to_memory_id: String,
     pub label: String,
-    pub properties: Option<String>,
+    pub properties: Option<serde_json::Value>,
     pub created_at: String,
 }
 
@@ -74,7 +77,7 @@ pub struct InsertEdgeParams<'a> {
     pub from_memory_id: &'a str,
     pub to_memory_id: &'a str,
     pub label: &'a str,
-    pub properties: Option<&'a str>,
+    pub properties: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,7 +85,7 @@ pub struct UpdateEdgeParams<'a> {
     pub actor_id: &'a str,
     pub edge_id: &'a str,
     pub label: Option<&'a str>,
-    pub properties: Option<&'a str>,
+    pub properties: Option<serde_json::Value>,
 }
 
 // --- Validation ---
@@ -105,13 +108,13 @@ fn validate_max_len(value: &str, max: usize, field: &str) -> Result<(), MemoryEr
     Ok(())
 }
 
-fn validate_json_object(value: &str, field: &str) -> Result<(), MemoryError> {
-    match serde_json::from_str::<serde_json::Value>(value) {
-        Ok(v) if v.is_object() => Ok(()),
-        _ => Err(MemoryError::InvalidInput(format!(
-            "{field} must be a valid JSON object"
-        ))),
+fn validate_json_object_value(v: &serde_json::Value, field: &str) -> Result<(), MemoryError> {
+    if !v.is_object() {
+        return Err(MemoryError::InvalidInput(format!(
+            "{field} must be a JSON object"
+        )));
     }
+    Ok(())
 }
 
 fn validate_insert_edge_params(params: &InsertEdgeParams<'_>) -> Result<(), MemoryError> {
@@ -135,9 +138,26 @@ fn validate_insert_edge_params(params: &InsertEdgeParams<'_>) -> Result<(), Memo
             "self-edges are not allowed".into(),
         ));
     }
-    if let Some(props) = params.properties {
-        validate_max_len(props, MAX_PROPERTIES_SIZE, "properties")?;
-        validate_json_object(props, "properties")?;
+    if let Some(ref v) = params.properties {
+        validate_json_object_value(v, "properties")?;
+        let obj = v.as_object().expect("validated as object above");
+        if obj.len() > MAX_PROPERTIES_KEYS {
+            return Err(MemoryError::InvalidInput(format!(
+                "properties exceeds maximum of {MAX_PROPERTIES_KEYS} keys"
+            )));
+        }
+        if json_value_depth(v) > MAX_PROPERTIES_DEPTH {
+            return Err(MemoryError::InvalidInput(format!(
+                "properties exceeds maximum nesting depth of {MAX_PROPERTIES_DEPTH}"
+            )));
+        }
+        let serialized =
+            serde_json::to_string(v).expect("serde_json::Value is always serializable");
+        if serialized.len() > MAX_PROPERTIES_SIZE {
+            return Err(MemoryError::InvalidInput(format!(
+                "properties exceeds maximum length of {MAX_PROPERTIES_SIZE} bytes"
+            )));
+        }
     }
     Ok(())
 }
@@ -155,9 +175,26 @@ fn validate_update_edge_params(params: &UpdateEdgeParams<'_>) -> Result<(), Memo
         validate_non_empty(label, "label")?;
         validate_max_len(label, MAX_LABEL_LEN, "label")?;
     }
-    if let Some(props) = params.properties {
-        validate_max_len(props, MAX_PROPERTIES_SIZE, "properties")?;
-        validate_json_object(props, "properties")?;
+    if let Some(ref v) = params.properties {
+        validate_json_object_value(v, "properties")?;
+        let obj = v.as_object().expect("validated as object above");
+        if obj.len() > MAX_PROPERTIES_KEYS {
+            return Err(MemoryError::InvalidInput(format!(
+                "properties exceeds maximum of {MAX_PROPERTIES_KEYS} keys"
+            )));
+        }
+        if json_value_depth(v) > MAX_PROPERTIES_DEPTH {
+            return Err(MemoryError::InvalidInput(format!(
+                "properties exceeds maximum nesting depth of {MAX_PROPERTIES_DEPTH}"
+            )));
+        }
+        let serialized =
+            serde_json::to_string(v).expect("serde_json::Value is always serializable");
+        if serialized.len() > MAX_PROPERTIES_SIZE {
+            return Err(MemoryError::InvalidInput(format!(
+                "properties exceeds maximum length of {MAX_PROPERTIES_SIZE} bytes"
+            )));
+        }
     }
     Ok(())
 }

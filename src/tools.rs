@@ -51,7 +51,7 @@ embedding: The server does NOT compute embeddings. Pass a caller-computed float 
 (384 dims, matching all-MiniLM-L6-v2 or compatible model) to enable vector search; \
 omit it to use FTS-only keyword search.
 
-metadata: A JSON object string, e.g. '{\"source\":\"user\",\"confidence\":0.9}'. \
+metadata: A JSON object, e.g. {\"source\":\"user\",\"confidence\":0.9}. \
 Stored as-is; filter on it via memory.list_memory_records.
 
 Intent guide:
@@ -162,9 +162,10 @@ pub struct CreateEventParams {
     #[schemars(description = "Base64-encoded binary data. Required when event_type is 'blob'.")]
     #[serde(default)]
     blob_data: Option<String>,
-    #[schemars(description = r#"JSON object string, e.g. '{"source":"user"}'. Stored as-is."#)]
+    #[schemars(schema_with = "json_object_schema")]
+    #[schemars(description = "JSON object stored as-is, e.g. {\"source\":\"user\"}.")]
     #[serde(default)]
-    metadata: Option<String>,
+    metadata: Option<serde_json::Value>,
     #[serde(default)]
     branch_id: Option<String>,
     #[schemars(
@@ -245,9 +246,10 @@ pub struct CreateMemoryRecordParams {
     )]
     #[serde(default)]
     namespace: Option<String>,
-    #[schemars(description = r#"JSON object string, e.g. '{"source":"user"}'. Stored as-is."#)]
+    #[schemars(schema_with = "json_object_schema")]
+    #[schemars(description = "JSON object stored as-is, e.g. {\"source\":\"user\"}.")]
     #[serde(default)]
-    metadata: Option<String>,
+    metadata: Option<serde_json::Value>,
     #[serde(default)]
     source_session_id: Option<String>,
     #[schemars(
@@ -409,11 +411,10 @@ pub struct CreateEdgeParams {
     )]
     to_memory_record_id: String,
     label: String,
-    #[schemars(
-        description = r#"JSON object string of edge properties, e.g. '{"weight":0.9}'. Optional."#
-    )]
+    #[schemars(schema_with = "json_object_schema")]
+    #[schemars(description = "JSON object of edge properties, e.g. {\"weight\":0.9}. Optional.")]
     #[serde(default)]
-    properties: Option<String>,
+    properties: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -467,11 +468,10 @@ pub struct UpdateEdgeToolParams {
     edge_id: String,
     #[serde(default)]
     label: Option<String>,
-    #[schemars(
-        description = r#"JSON object string of edge properties, e.g. '{"weight":0.9}'. Optional."#
-    )]
+    #[schemars(schema_with = "json_object_schema")]
+    #[schemars(description = "JSON object of edge properties, e.g. {\"weight\":0.9}. Optional.")]
     #[serde(default)]
-    properties: Option<String>,
+    properties: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -556,9 +556,10 @@ pub struct CreateCheckpointParams {
         description = "UUID of the event, returned by memory.create_event or memory.list_events."
     )]
     event_id: String,
-    #[schemars(description = r#"JSON object string, e.g. '{"source":"user"}'. Stored as-is."#)]
+    #[schemars(schema_with = "json_object_schema")]
+    #[schemars(description = "JSON object stored as-is, e.g. {\"source\":\"user\"}.")]
     #[serde(default)]
-    metadata: Option<String>,
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -615,6 +616,15 @@ pub struct ListBranchesToolParams {
 }
 
 // --- Helpers ---
+
+fn json_object_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "anyOf": [
+            {"type": "null"},
+            {"type": "object"}
+        ]
+    })
+}
 
 fn parse_branch_filter(s: Option<&str>) -> BranchFilter<'_> {
     match s {
@@ -701,7 +711,7 @@ impl MemoryServer {
                 role,
                 content: params.content.as_deref(),
                 blob_data: blob_bytes.as_deref(),
-                metadata: params.metadata.as_deref(),
+                metadata: params.metadata,
                 branch_id: params.branch_id.as_deref(),
                 expires_at: params.expires_at.as_deref(),
             };
@@ -825,7 +835,7 @@ impl MemoryServer {
                 content: &params.content,
                 strategy: &params.strategy,
                 namespace: params.namespace.as_deref(),
-                metadata: params.metadata.as_deref(),
+                metadata: params.metadata,
                 source_session_id: params.source_session_id.as_deref(),
                 embedding: params.embedding.as_deref(),
             };
@@ -1139,7 +1149,7 @@ impl MemoryServer {
                 from_memory_id: &params.from_memory_record_id,
                 to_memory_id: &params.to_memory_record_id,
                 label: &params.label,
-                properties: params.properties.as_deref(),
+                properties: params.properties,
             };
             graph::add_edge(db, &p)
         })
@@ -1218,7 +1228,7 @@ impl MemoryServer {
                 actor_id: &params.actor_id,
                 edge_id: &params.edge_id,
                 label: params.label.as_deref(),
-                properties: params.properties.as_deref(),
+                properties: params.properties,
             };
             graph::update_edge(db, &p)
         })
@@ -1303,7 +1313,7 @@ impl MemoryServer {
                 session_id: &params.session_id,
                 name: &params.name,
                 event_id: &params.event_id,
-                metadata: params.metadata.as_deref(),
+                metadata: params.metadata,
             };
             sessions::create_checkpoint(db, &p).map(|cp| serde_json::json!({ "checkpoint": cp }))
         })

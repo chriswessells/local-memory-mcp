@@ -431,7 +431,7 @@ fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
         role: row.get(4)?,
         content: row.get(5)?,
         blob_data: row.get(6)?,
-        metadata: row.get(7)?,
+        metadata: parse_json_opt(row.get(7)?)?,
         branch_id: row.get(8)?,
         created_at: row.get(9)?,
         expires_at: row.get(10)?,
@@ -445,7 +445,7 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
         namespace: row.get(2)?,
         strategy: row.get(3)?,
         content: row.get(4)?,
-        metadata: row.get(5)?,
+        metadata: parse_json_opt_lenient(row.get(5)?),
         source_session_id: row.get(6)?,
         is_valid: row.get::<_, i32>(7)? != 0,
         superseded_by: row.get(8)?,
@@ -469,13 +469,37 @@ fn escape_like(s: &str) -> String {
         .replace('_', "\\_")
 }
 
+fn serialize_json_opt(v: &Option<serde_json::Value>) -> Option<String> {
+    v.as_ref()
+        .map(|val| serde_json::to_string(val).expect("serde_json::Value is always serializable"))
+}
+
+fn parse_json_opt(raw: Option<String>) -> rusqlite::Result<Option<serde_json::Value>> {
+    match raw {
+        None => Ok(None),
+        Some(s) => serde_json::from_str(&s).map(Some).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        }),
+    }
+}
+
+fn parse_json_opt_lenient(raw: Option<String>) -> Option<serde_json::Value> {
+    raw.and_then(|s| match serde_json::from_str(&s) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!("failed to deserialize JSON field from DB: {e}");
+            None
+        }
+    })
+}
+
 fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
     Ok(Edge {
         id: row.get(0)?,
         from_memory_id: row.get(1)?,
         to_memory_id: row.get(2)?,
         label: row.get(3)?,
-        properties: row.get(4)?,
+        properties: parse_json_opt(row.get(4)?)?,
         created_at: row.get(5)?,
     })
 }
@@ -486,7 +510,7 @@ fn row_to_neighbor(row: &rusqlite::Row<'_>) -> rusqlite::Result<Neighbor> {
         from_memory_id: row.get(1)?,
         to_memory_id: row.get(2)?,
         label: row.get(3)?,
-        properties: row.get(4)?,
+        properties: parse_json_opt_lenient(row.get(4)?),
         created_at: row.get(5)?,
     };
     let memory = Memory {
@@ -495,7 +519,7 @@ fn row_to_neighbor(row: &rusqlite::Row<'_>) -> rusqlite::Result<Neighbor> {
         namespace: row.get(8)?,
         strategy: row.get(9)?,
         content: row.get(10)?,
-        metadata: row.get(11)?,
+        metadata: parse_json_opt_lenient(row.get(11)?),
         source_session_id: row.get(12)?,
         is_valid: row.get::<_, i32>(13)? != 0,
         superseded_by: row.get(14)?,
@@ -516,7 +540,7 @@ fn row_to_traversal_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<TraversalN
         namespace: row.get(5)?,
         strategy: row.get(6)?,
         content: row.get(7)?,
-        metadata: row.get(8)?,
+        metadata: parse_json_opt_lenient(row.get(8)?),
         source_session_id: row.get(9)?,
         is_valid: row.get::<_, i32>(10)? != 0,
         superseded_by: row.get(11)?,
@@ -621,7 +645,7 @@ impl Db for Connection {
                 ":role": params.role,
                 ":content": params.content,
                 ":blob_data": params.blob_data,
-                ":metadata": params.metadata,
+                ":metadata": serialize_json_opt(&params.metadata),
                 ":branch_id": params.branch_id,
                 ":expires_at": params.expires_at,
             },
@@ -801,7 +825,7 @@ impl Db for Connection {
                     ":namespace": namespace,
                     ":strategy": params.strategy,
                     ":content": params.content,
-                    ":metadata": params.metadata,
+                    ":metadata": serialize_json_opt(&params.metadata),
                     ":source_session_id": params.source_session_id,
                 },
                 row_to_memory,
@@ -838,7 +862,7 @@ impl Db for Connection {
                     ":namespace": namespace,
                     ":strategy": params.strategy,
                     ":content": params.content,
-                    ":metadata": params.metadata,
+                    ":metadata": serialize_json_opt(&params.metadata),
                     ":source_session_id": params.source_session_id,
                 },
                 row_to_memory,
@@ -1255,7 +1279,7 @@ impl Db for Connection {
                 ":from_memory_id": params.from_memory_id,
                 ":to_memory_id": params.to_memory_id,
                 ":label": params.label,
-                ":properties": params.properties,
+                ":properties": serialize_json_opt(&params.properties),
             },
             row_to_edge,
         )
@@ -1445,7 +1469,8 @@ impl Db for Connection {
     }
 
     fn update_edge(&self, params: &UpdateEdgeParams<'_>) -> Result<Edge, MemoryError> {
-        let result = match (params.label, params.properties) {
+        let serialized_props = serialize_json_opt(&params.properties);
+        let result = match (params.label, serialized_props.as_deref()) {
             (Some(label), Some(props)) => {
                 self.query_row(
                     "UPDATE knowledge_edges SET label = :label, properties = :properties
@@ -1860,7 +1885,7 @@ impl Db for Connection {
                     ":actor_id": params.actor_id,
                     ":name": params.name,
                     ":event_id": params.event_id,
-                    ":metadata": params.metadata,
+                    ":metadata": serialize_json_opt(&params.metadata),
                 },
                 |row| {
                     Ok(Checkpoint {
@@ -1869,7 +1894,7 @@ impl Db for Connection {
                         actor_id: row.get(2)?,
                         name: row.get(3)?,
                         event_id: row.get(4)?,
-                        metadata: row.get(5)?,
+                        metadata: parse_json_opt(row.get(5)?)?,
                         created_at: row.get(6)?,
                     })
                 },
@@ -2009,7 +2034,7 @@ impl Db for Connection {
                         actor_id: row.get(2)?,
                         name: row.get(3)?,
                         event_id: row.get(4)?,
-                        metadata: row.get(5)?,
+                        metadata: parse_json_opt_lenient(row.get(5)?),
                         created_at: row.get(6)?,
                     })
                 },
@@ -3180,13 +3205,13 @@ mod tests {
                 from_memory_id: &m1.id,
                 to_memory_id: &m2.id,
                 label: "depends_on",
-                properties: Some(r#"{"weight": 1}"#),
+                properties: Some(serde_json::json!({"weight": 1})),
             })
             .unwrap();
         assert_eq!(edge.from_memory_id, m1.id);
         assert_eq!(edge.to_memory_id, m2.id);
         assert_eq!(edge.label, "depends_on");
-        assert_eq!(edge.properties.as_deref(), Some(r#"{"weight": 1}"#));
+        assert_eq!(edge.properties, Some(serde_json::json!({"weight": 1})));
         assert!(!edge.id.is_empty());
 
         let fetched = conn.get_edge("a1", &edge.id).unwrap();

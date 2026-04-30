@@ -10,6 +10,8 @@ pub const MAX_SESSION_ID_LEN: usize = 256;
 pub const MAX_CONTENT_SIZE: usize = 1_048_576; // 1 MB
 pub const MAX_BLOB_SIZE: usize = 10_485_760; // 10 MB
 pub const MAX_METADATA_SIZE: usize = 65_536; // 64 KB
+pub const MAX_METADATA_KEYS: usize = 50;
+pub const MAX_METADATA_DEPTH: usize = 5;
 pub const MAX_PAGE_LIMIT: u32 = 1000;
 pub const DEFAULT_PAGE_LIMIT: u32 = 100;
 
@@ -25,7 +27,7 @@ pub struct Event {
     pub content: Option<String>,
     #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none", default)]
     pub blob_data: Option<Vec<u8>>,
-    pub metadata: Option<String>,
+    pub metadata: Option<serde_json::Value>,
     pub branch_id: Option<String>,
     /// ISO 8601 UTC timestamp: YYYY-MM-DDTHH:MM:SSZ
     pub created_at: String,
@@ -60,7 +62,7 @@ pub struct InsertEventParams<'a> {
     pub role: Option<&'a str>,
     pub content: Option<&'a str>,
     pub blob_data: Option<&'a [u8]>,
-    pub metadata: Option<&'a str>,
+    pub metadata: Option<serde_json::Value>,
     pub branch_id: Option<&'a str>,
     pub expires_at: Option<&'a str>,
 }
@@ -74,6 +76,16 @@ pub struct GetEventsParams<'a> {
     pub offset: u32,
     pub before: Option<&'a str>,
     pub after: Option<&'a str>,
+}
+
+// --- Helpers ---
+
+pub fn json_value_depth(v: &serde_json::Value) -> usize {
+    match v {
+        serde_json::Value::Object(m) => 1 + m.values().map(json_value_depth).max().unwrap_or(0),
+        serde_json::Value::Array(a) => 1 + a.iter().map(json_value_depth).max().unwrap_or(0),
+        _ => 0,
+    }
 }
 
 // --- Validation ---
@@ -91,6 +103,15 @@ fn validate_max_len(value: &str, max: usize, field: &str) -> Result<(), MemoryEr
     if value.len() > max {
         return Err(MemoryError::InvalidInput(format!(
             "{field} exceeds maximum length of {max} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_json_object_value(v: &serde_json::Value, field: &str) -> Result<(), MemoryError> {
+    if !v.is_object() {
+        return Err(MemoryError::InvalidInput(format!(
+            "{field} must be a JSON object"
         )));
     }
     Ok(())
@@ -176,20 +197,25 @@ fn validate_insert_params(params: &InsertEventParams<'_>) -> Result<(), MemoryEr
         }
     }
 
-    if let Some(metadata) = params.metadata {
-        if metadata.len() > MAX_METADATA_SIZE {
+    if let Some(ref v) = params.metadata {
+        validate_json_object_value(v, "metadata")?;
+        let obj = v.as_object().expect("validated as object above");
+        if obj.len() > MAX_METADATA_KEYS {
             return Err(MemoryError::InvalidInput(format!(
-                "metadata exceeds maximum size of {MAX_METADATA_SIZE} bytes"
+                "metadata exceeds maximum of {MAX_METADATA_KEYS} keys"
             )));
         }
-        // Must parse as a JSON object
-        match serde_json::from_str::<serde_json::Value>(metadata) {
-            Ok(v) if v.is_object() => {}
-            _ => {
-                return Err(MemoryError::InvalidInput(
-                    "metadata must be a valid JSON object".into(),
-                ));
-            }
+        if json_value_depth(v) > MAX_METADATA_DEPTH {
+            return Err(MemoryError::InvalidInput(format!(
+                "metadata exceeds maximum nesting depth of {MAX_METADATA_DEPTH}"
+            )));
+        }
+        let serialized =
+            serde_json::to_string(v).expect("serde_json::Value is always serializable");
+        if serialized.len() > MAX_METADATA_SIZE {
+            return Err(MemoryError::InvalidInput(format!(
+                "metadata exceeds maximum length of {MAX_METADATA_SIZE} bytes"
+            )));
         }
     }
 
