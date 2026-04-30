@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Rust toolchain (stable) — install via [rustup](https://rustup.rs/)
-- No other dependencies — SQLite and sqlite-vec are compiled from source via `bundled` feature
+- No other dependencies — SQLite and sqlite-vec are compiled from source via the `bundled` feature flag
 
 ## Building
 
@@ -15,29 +15,148 @@ cargo build --release # release build (~5-10MB binary)
 ## Testing
 
 ```bash
-cargo test                        # run all tests
-cargo test -- --test-threads=1    # serial execution (if tests share resources)
-cargo clippy -- -D warnings       # lint with zero warnings policy
+cargo test                      # run all tests
+cargo clippy -- -D warnings     # lint with zero-warnings policy
+cargo fmt --check               # verify formatting
 ```
 
-81 tests across 4 components. Tests use `tempfile` for isolated SQLite databases — no test fixtures or external services needed.
+153 tests across unit, integration, and E2E suites. Tests use `tempfile` for isolated SQLite databases — no fixtures or external services required.
+
+---
+
+## Contributing with a Coding Agent
+
+This project is designed to be developed collaboratively with a coding agent (Claude Code, Cursor, Kiro, Codex, or similar). The workflow below is how every component has been built. Following it produces consistent, high-quality results and keeps the tracking files accurate for the next session.
+
+### Step 1 — Orient the agent
+
+Start every session by telling the agent to read `Start_session.md`. This file is the single source of truth for what the project is, where everything lives, and what the rules are. The agent will also read `agents/TODO.md` to find out what's done and what's next.
+
+> **Example prompt:**
+> *"Read Start_session.md and then tell me what's next on the TODO list."*
+
+The agent will read the session file, orient itself, and summarize the current state. From there you can steer it toward the work you want to do.
+
+### Step 2 — Describe what you want
+
+Once the agent is oriented, describe the change or feature you have in mind in plain language. You don't need to specify implementation details — that's what the design phase is for. Focus on what problem you're solving or what behavior you want.
+
+> **Example prompts:**
+> - *"I want to add a tool that lets callers batch-delete expired events more efficiently."*
+> - *"The metadata field should accept a real JSON object instead of a stringified JSON string."*
+> - *"We need integration tests for the session and namespace tools."*
+
+Have a back-and-forth conversation with the agent to clarify scope, constraints, and any relevant context before design begins. This conversation is cheap — it's far less expensive than discovering a misunderstood requirement after code is written.
+
+### Step 3 — Design
+
+Ask the agent to write a design document in `design/`. A good design doc for this project includes:
+
+- **Data flow** — how data moves through the layers (MCP tool → business logic → `Db` trait → SQL)
+- **Error handling** — every failure mode and what error variant it maps to
+- **Schema changes** — any new tables, columns, or indexes with the exact DDL
+- **API surface** — structs, method signatures, and the `Db` trait extension
+- **Implementation plan** — an ordered list of tasks with acceptance criteria
+- **Dependency graph** — which tasks can run in parallel and which must be sequential
+- **Sub-agent instructions** — precise enough that an agent could execute them without asking follow-up questions
+
+> **Example prompt:**
+> *"Write a design doc for this change in design/. Follow the structure of existing design docs like design/memory-tools.md."*
+
+### Step 4 — Design review
+
+Once the design is written, ask the agent to run it through all five review personas. The personas live in `agents/` and each one focuses on a different dimension of quality.
+
+| Persona | File | Focus |
+|---------|------|-------|
+| Security | `agents/sec_review.md` | Injection, privilege, supply chain, data leakage |
+| Architecture | `agents/arch_review.md` | API design, extensibility, tech choices |
+| Maintainability | `agents/maint_review.md` | Test strategy, dependencies, code organization |
+| Reliability | `agents/rel_review.md` | Failure modes, durability, recovery paths |
+| Interoperability | `agents/interop_review.md` | MCP compliance, cross-platform, encoding |
+
+Each persona produces findings rated **Critical**, **High**, **Medium**, or **Low**.
+
+> **Example prompt:**
+> *"Run all five review personas against the design doc you just wrote."*
+
+### Step 5 — Fix Critical and High findings
+
+All **Critical** and **High** findings must be resolved before moving to code. Work through each one with the agent — some will require revising the design doc, others might require a new architectural decision. Log any new architectural decisions in `agents/ADR.md`.
+
+Medium and Low findings go into the `agents/TODO.md` backlog. They are not blockers.
+
+If the changes needed to resolve Critical or High findings were substantial — meaning they touched a public API signature, a new module or struct, the concurrency model, a new dependency, the data model, or error handling strategy — **re-run all five personas on the revised design** before proceeding. The gate is that reviewers approve the design that will actually be built, not a previous version of it.
+
+> **Example prompt:**
+> *"We resolved the High findings. The changes touched the Db trait signature and added a new struct. Please re-run the design review."*
+
+### Step 6 — Code
+
+With an approved design in hand, ask the agent to implement it. The agent should follow the design's implementation plan and dependency graph, write tests alongside the code, and verify the build stays clean throughout.
+
+Every implementation must satisfy three gates before moving on:
+
+```bash
+cargo check                   # no compile errors
+cargo test                    # all tests pass
+cargo clippy -- -D warnings   # no lints
+```
+
+> **Example prompt:**
+> *"Implement the approved design. Follow the tasks in order, write tests alongside the code, and verify cargo check, cargo test, and cargo clippy all pass before we move to review."*
+
+### Step 7 — Code review
+
+Once the implementation is working and tests pass, ask the agent to run all five personas against the code. The same personas used in design review now read the actual implementation looking for bugs, security issues, and maintainability problems that weren't visible at design time.
+
+> **Example prompt:**
+> *"Run all five review personas against the implementation."*
+
+### Step 8 — Fix Critical and High findings
+
+Same rule as design review — all **Critical** and **High** findings must be resolved before merging. Work through each one with the agent, re-run tests and clippy after fixes, and log Medium and Low findings to `agents/TODO.md`.
+
+### Step 9 — Update the tracking files
+
+Before ending the session, make sure the tracking files reflect what was done. This is what allows the next session — with you or anyone else — to pick up exactly where you left off.
+
+- **`agents/TODO.md`** — mark completed tasks, move items from In Progress to Completed, add any new backlog items surfaced during review
+- **`CHANGELOG.md`** — record any user-facing changes (new tools, renamed parameters, breaking changes, bug fixes)
+- **`agents/TIME_LOG.md`** — log how long each phase took
+
+> **Example prompt:**
+> *"Update TODO.md, CHANGELOG.md, and TIME_LOG.md to reflect the work we just completed."*
+
+---
 
 ## Project Structure
 
 ```
 local-memory-mcp/
-├── Start_session.md              # AI agent session orientation
+├── Start_session.md              # Agent session orientation — read this first
 ├── README.md
 ├── DEVELOP.md                    # This file
+├── CHANGELOG.md                  # User-facing change history
 ├── Cargo.toml
 ├── Cargo.lock                    # Committed — pinned dependencies
 │
 ├── design/                       # Architecture and component designs
 │   ├── DESIGN.md                 # Main design document (data model, MCP tools, principles)
+│   ├── agentcore-parity.md       # AgentCore Memory alignment and rename mapping
+│   ├── llm-discoverability.md    # LLM harness discoverability audit and recommendations
 │   ├── core-db-layer.md          # Component 1: db.rs + store.rs
 │   ├── event-tools.md            # Component 2: events.rs
 │   ├── memory-tools.md           # Component 3: memories.rs
-│   └── search.md                 # Component 4: search.rs
+│   ├── search.md                 # Component 4: search.rs
+│   ├── knowledge-graph.md        # Component 5: graph.rs
+│   ├── session-tools.md          # Component 6: sessions.rs
+│   ├── namespace-tools.md        # Component 8: namespaces.rs
+│   ├── mcp-server.md             # Component 9: tools.rs + main.rs
+│   ├── ci-cd.md                  # Component 10: GitHub Actions workflows
+│   ├── installers.md             # Component 11: install.sh
+│   ├── integration-tests.md      # Component 12: tests/
+│   └── graceful-shutdown.md      # Bug fix: SIGTERM + WAL checkpoint
 │
 ├── agents/                       # Development process and tracking
 │   ├── WORKFLOW.md               # Phased process: Design → Review → Code → Review → Merge
@@ -51,58 +170,58 @@ local-memory-mcp/
 │   ├── rel_review.md             # Reliability reviewer persona
 │   └── interop_review.md         # Interoperability reviewer persona
 │
+├── tests/
+│   ├── common/mod.rs             # Shared test helpers (setup, parse_ok, parse_err)
+│   ├── integration.rs            # Integration tests — full tool round-trips
+│   └── e2e.rs                    # E2E tests — binary process over stdio MCP
+│
 └── src/
-    ├── main.rs                   # Binary entry point
+    ├── main.rs                   # Binary entry point, signal handling, graceful shutdown
     ├── lib.rs                    # Library crate (module declarations)
     ├── db.rs                     # SQLite connection, schema migration, Db trait + impl
     ├── store.rs                  # StoreManager (multi-store lifecycle)
     ├── error.rs                  # MemoryError enum
-    ├── events.rs                 # Short-term memory types, validation, business logic
-    ├── memories.rs               # Long-term memory types, validation, business logic
-    └── search.rs                 # FTS5 + vector search, RRF hybrid, sanitization
+    ├── events.rs                 # Short-term memory: types, validation, business logic
+    ├── memories.rs               # Long-term memory: types, validation, business logic
+    ├── search.rs                 # FTS5 + vector search, RRF hybrid fusion, query sanitization
+    ├── graph.rs                  # Knowledge graph: edges, traversal, neighbor queries
+    ├── sessions.rs               # Session tools: checkpoints, branches
+    ├── namespaces.rs             # Namespace registry: create, list, delete
+    └── tools.rs                  # MCP tool handlers (MemoryServer, 29 tools)
 ```
 
 ## Architecture
 
-All database operations go through the `Db` trait defined in `db.rs`. Downstream modules (`events.rs`, `memories.rs`, `search.rs`) accept `&dyn Db` and never write raw SQL. All SQL lives in `impl Db for Connection`.
+All database operations go through the `Db` trait defined in `db.rs`. Downstream modules (`events.rs`, `memories.rs`, `search.rs`, etc.) accept `&dyn Db` and never write raw SQL — all SQL lives in the `impl Db for Connection` block. This keeps the API surface explicit and testable.
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│  tools.rs    │────►│  events.rs   │────►│  Db trait    │
-│  (MCP layer) │     │  memories.rs │     │  (db.rs)     │
-│  Component 8 │     │  search.rs   │     │              │
-│              │     │              │     │  impl Db for │
-│              │     │              │     │  Connection   │
-└─────────────┘     └──────────────┘     └─────────────┘
+┌─────────────┐     ┌──────────────┐     ┌──────────────┐
+│  tools.rs   │────►│  events.rs   │────►│  Db trait    │
+│  (MCP layer)│     │  memories.rs │     │  (db.rs)     │
+│  29 tools   │     │  search.rs   │     │              │
+│             │     │  graph.rs    │     │  impl Db for │
+│             │     │  sessions.rs │     │  Connection  │
+│             │     │  namespaces.rs│    │              │
+└─────────────┘     └──────────────┘     └──────────────┘
 ```
 
-`StoreManager` in `store.rs` manages the SQLite connection lifecycle. It's wrapped in `Arc<std::sync::Mutex<StoreManager>>` and accessed via `tokio::task::spawn_blocking` since `rusqlite::Connection` is `!Send`.
-
-## Development Workflow
-
-Every component goes through: **Design → Design Review → Code → Code Review → Merge**.
-
-1. **Design** — Write a detailed design doc in `design/` with data flow, error handling, implementation plan, DAG, and sub-agent instructions
-2. **Design Review** — Run all 5 review personas (security, architecture, maintainability, reliability, interoperability). Resolve all Critical and High findings. Log Medium/Low to `TODO.md` backlog. Re-review if changes were substantial.
-3. **Code** — Implement the approved design. Write tests alongside code. All three must pass: `cargo check`, `cargo test`, `cargo clippy -- -D warnings`
-4. **Code Review** — Run all 5 review personas against the implementation. Resolve all Critical and High findings.
-5. **Merge** — Commit to `main`. Update `TODO.md`, `LESSONS_LEARNED.md`, `TIME_LOG.md`.
-
-See `agents/WORKFLOW.md` for the full process definition.
+`StoreManager` in `store.rs` manages the SQLite connection lifecycle. It's wrapped in `Arc<Mutex<StoreManager>>` and accessed via `tokio::task::spawn_blocking` since `rusqlite::Connection` is `!Send`.
 
 ## Key Design Decisions
 
-Documented in `agents/ADR.md`:
+All architectural decisions are documented with full rationale in `agents/ADR.md`. The most consequential ones:
 
-- **ADR-001**: SQLite over SurrealDB — license (public domain vs BSL 1.1), binary size (~2MB vs ~30-50MB), build time
-- **ADR-003**: Separate SQLite files per store — full isolation, portable, independently deletable
-- **ADR-005**: Embeddings provided by caller — keeps binary small, no bundled model
-- **ADR-006**: Memory extraction is agent-driven — server is a storage layer, not an intelligence layer
-- **ADR-007**: `Db` trait as API contract — all SQL centralized, parallel-safe development
+| Decision | Choice | Why |
+|----------|--------|-----|
+| Database | SQLite (not SurrealDB) | Public domain license, ~2MB binary vs ~50MB, no runtime daemon |
+| Store isolation | One `.db` file per store | Full isolation, portable, independently deletable |
+| Embeddings | Caller-provided | Keeps binary small, no bundled model, works with any embedding provider |
+| Memory extraction | Agent-driven | Server is a storage layer, not an intelligence layer |
+| SQL boundary | `Db` trait | All SQL centralized, safe for parallel agent development |
 
 ## Dependencies
 
-Critical dependencies are pinned to exact versions:
+Critical dependencies are pinned to exact versions to ensure reproducible builds:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
@@ -112,17 +231,22 @@ Critical dependencies are pinned to exact versions:
 | `tokio` | 1 | Async runtime |
 | `thiserror` | 2 | Error derive macros |
 | `serde` / `serde_json` | 1 | Serialization |
+| `schemars` | 0.8 | JSON Schema generation for MCP tool parameters |
 | `uuid` | 1 | UUID v4 generation |
+| `base64` | 0.22 | Blob encoding for MCP JSON transport |
 | `dirs` | 6 | Platform-appropriate home directory |
-| `tracing` | 0.1 | Structured logging |
+| `tracing` / `tracing-subscriber` | 0.1 | Structured logging to stderr |
 
 Dev: `tempfile = "3"` for test isolation.
 
-## Adding a New Component
+## Releases
 
-1. Read `agents/TODO.md` for the next planned component
-2. Read `design/DESIGN.md` for the data model and MCP tool surface
-3. Read `agents/ADR.md` to avoid re-litigating settled decisions
-4. Write a design doc in `design/` following the pattern of existing component designs
-5. Follow the workflow in `agents/WORKFLOW.md`
-6. Log time in `agents/TIME_LOG.md` as you work
+Binary releases are triggered by pushing a version tag — **not** by commits to `main`. CI runs tests on every push to `main`, but no binary is produced until a tag is pushed.
+
+```bash
+# To cut a release (maintainers only):
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release workflow cross-compiles for four targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
