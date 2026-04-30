@@ -340,6 +340,78 @@ See `design/DESIGN.md` § "Agentic Coding Workflow — Research" for full ration
 - [ ] Dogfood `local-memory-mcp` itself via `.mcp.json` (any vendor that supports MCP gets the agent's memory)
 - [ ] Autonomous scheduled review loop — GitHub Actions cron runs `scripts/code-review.sh` against `main`, opens issue on new findings
 
+### LLM Harness Discoverability
+
+See `design/llm-discoverability.md` for full audit, findings (F1–F6),
+and rationale. Goal: make it easier for LLM harnesses (Claude Code,
+Cursor, Codex, etc.) to find and correctly use the server's 29 tools.
+
+#### Tier 1 — In-place, no surface break (land first)
+- [x] R1: Override `MemoryServer::get_info()` to set `server_info` (fix `"rmcp"` → `"local-memory-mcp"` identity, add title + description) and `instructions` block (actor_id concept, namespace convention, embedding contract, strategy vocabulary, intent→tool decision list)
+- [x] R2: Add `#[schemars(description = ...)]` to every non-obvious param field — `actor_id`, `session_id`, `strategy`, `metadata` (clarify JSON-object-string + example), `namespace`/`namespace_prefix`, `embedding`/`new_embedding` (note caller-computed), all `*_id` UUID fields, `properties`
+- [x] R5: Add `ToolAnnotations` to all tools — `readOnlyHint` on get/list/recall/traverse/stats, `destructiveHint` on all `delete_*`, `idempotentHint` on `create_namespace`/`switch_store`, friendly `title` on every tool
+- [x] R6: Rewrite descriptions of similar-sibling tools with explicit "use this for X, not Y" discriminators — `memory.list` ↔ `memory.recall`, `memory.get_event` ↔ `memory.get_events` ↔ `memory.list_sessions`, `graph.get_neighbors` ↔ `graph.traverse`
+
+#### Tier 2 — Surface changes, bundle for v0.2
+
+AgentCore-aligned rename. Canonical mapping is in
+`design/agentcore-parity.md`; rollout confirmed as a hard rename
+(no aliases). Net: 12 tool renames + 4 namespace moves;
+13 tools unchanged.
+
+##### Tool renames
+- [ ] Rename `memory.add_event` → `memory.create_event` (AgentCore: `CreateEvent`)
+- [ ] Rename `memory.get_events` → `memory.list_events` (AgentCore: `ListEvents`)
+- [ ] Rename `memory.delete_expired` → `memory.delete_expired_events`
+- [ ] Rename `memory.store` → `memory.create_memory_record` (AgentCore: `CreateMemoryRecord`/`BatchCreateMemoryRecords`); resolves the `memory.store`/`memory.list_stores` noun-verb collision
+- [ ] Rename `memory.get` → `memory.get_memory_record` (AgentCore: `GetMemoryRecord`)
+- [ ] Rename `memory.list` → `memory.list_memory_records` (AgentCore: `ListMemoryRecords`)
+- [ ] Rename `memory.recall` → `memory.retrieve_memory_records` (AgentCore: `RetrieveMemoryRecords`); highest-leverage rename — surfaces "retrieve"/"search" intent
+- [ ] Rename `memory.consolidate` → `memory.update_memory_record` (closest AgentCore op: `BatchUpdateMemoryRecords`)
+- [ ] Rename `memory.delete` → `memory.delete_memory_record` (AgentCore: `DeleteMemoryRecord`)
+- [ ] Rename `memory.checkpoint` → `memory.create_checkpoint`
+- [ ] Rename `memory.branch` → `memory.create_branch`
+- [ ] Rename `graph.add_edge` → `graph.create_edge`
+- [ ] Rename `graph.stats` → `graph.get_stats`
+
+##### Namespace moves
+- [ ] Move `memory.switch_store` → `store.switch`
+- [ ] Move `memory.current_store` → `store.current`
+- [ ] Move `memory.list_stores` → `store.list`
+- [ ] Move `memory.delete_store` → `store.delete`
+
+##### Field renames
+- [ ] Rename `memory_id` → `memory_record_id` on `GetMemoryParams`, `ConsolidateParams`, `DeleteMemoryParams`; resolves AgentCore semantic collision (their `memoryId` is the resource, not a record)
+- [ ] Rename `from_memory_id` / `to_memory_id` / `start_memory_id` → `from_memory_record_id` / `to_memory_record_id` / `start_memory_record_id` on graph params
+- [ ] Rename `query` → `search_query` on `memory.retrieve_memory_records` (matches AgentCore `searchQuery`)
+- [ ] Rename `limit` → `top_k` on `memory.retrieve_memory_records` (matches AgentCore `topK`); other tools keep `limit`
+
+##### Description rewrites (apply to all tools using the parity-doc style guide)
+- [ ] Apply the "Use this when X; use sibling Y instead for Z. … (AgentCore equivalent: Op)" template from `design/agentcore-parity.md` §"Description style guide" to every tool description; worked examples already drafted for `memory.retrieve_memory_records`, `memory.create_memory_record`, `memory.list_events`, `memory.update_memory_record`, `memory.create_event`, `store.switch`, `graph.create_edge`
+
+##### Source-side cleanup that ships in the same PR
+- [ ] Update `README.md` tool tables (lines 91–151) with v0.2 names
+- [ ] Update tool-name references in `design/DESIGN.md`, `design/mcp-server.md`, `design/memory-tools.md`, `design/event-tools.md`, `design/session-tools.md`, `design/namespace-tools.md`, `design/knowledge-graph.md`, `design/search.md`
+- [ ] Update tool-name references in `tests/integration.rs` and `tests/e2e.rs`
+- [ ] Bump `version` in `Cargo.toml` to `0.2.0`
+
+##### Other Tier-2 items (independent of the rename)
+- [ ] R7: Change `metadata` and graph `properties` from `Option<String>` to `Option<serde_json::Value>` so the JSON Schema reflects the actual object shape
+- [ ] R8: Optional — replace dots with underscores in tool names (`memory_create_event`, `graph_traverse`) for cross-host portability; if keeping dots, document host-compatibility requirement in README
+
+### From LLM discoverability Tier 1 code review (Medium/Low)
+- [ ] Replace "email hash" example in SERVER_INSTRUCTIONS with "UUID or opaque per-user identifier" (SecReview Low)
+- [ ] Add schemars description to `name` field on `SwitchStoreParams`, `DeleteStoreParams`, and `CreateNamespaceToolParams` (doc comments are not emitted in JSON Schema) (ArchReview Medium A2, A3; InteropReview Low F2)
+- [ ] Add schemars description to `BranchToolParams.parent_branch_id` and `GetEventsToolParams.branch_filter` (valid values: "all", "main", branch UUID) (ArchReview Medium A4)
+- [ ] Add schemars description to `direction` field on `GetNeighborsParams` and `TraverseParams` (doc comment only, not in JSON Schema) (ArchReview Low A5)
+- [ ] Add sentence to `memory.switch_store` and `memory.delete_store` descriptions: "This tool does not require actor_id — it operates on the store globally." (ArchReview Low A6)
+- [ ] Add schemars description to `ConsolidateMemoryParams.action` field explaining 'update' vs 'invalidate' semantics (ArchReview Low A7)
+- [ ] Add `// keep in sync with crate::db::EMBEDDING_DIM` comment next to "384 dims" in SERVER_INSTRUCTIONS and embedding field descriptions (RelReview Low; MaintReview Low M3; InteropReview Low F1)
+- [ ] Add "Deletes across all actors — not scoped to a specific actor_id." to `memory.delete_expired` description (InteropReview Low F3)
+- [ ] Add `// NOTE: actor_id description is repeated across all param structs — grep for the exact string to find all occurrences when updating.` comment before first occurrence (MaintReview Medium M1)
+- [ ] Add `// TODO(v0.2): update tool names in SERVER_INSTRUCTIONS after Tier 2 rename lands` comment (MaintReview Low M5)
+- [ ] Remove duplicate `/// JSON object string for edge properties` doc comment on `UpdateEdgeToolParams.properties` (MaintReview Low M4)
+
 ### Future features
 - [ ] Local embedding model (ort + all-MiniLM-L6-v2)
 - [ ] Automatic extraction (on-device LLM)

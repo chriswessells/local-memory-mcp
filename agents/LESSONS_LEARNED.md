@@ -109,6 +109,18 @@ Capture what went wrong, what surprised us, and what we'd do differently.
 
 ---
 
+## From LLM Discoverability Tier 1
+
+- **`#[tool_router(server_handler)]` generates a full `impl ServerHandler` block — you cannot add a second one.** To override `get_info()`, change the flag to `#[tool_router]` (no `server_handler`) and write a separate `#[tool_handler] impl ServerHandler for MemoryServer { fn get_info() {...} }` block. The `#[tool_handler]` macro skips generating `get_info()` when you provide your own, per the rmcp-macros documentation.
+
+- **The `#[tool]` macro supports `annotations(...)` directly.** No `list_tools()` override needed. Use `#[tool(name = "...", description = "...", annotations(title = "...", read_only_hint = true))]`. This is documented in `rmcp-macros-1.5.0/src/lib.rs` but easy to miss.
+
+- **Test the wire path, not just the constant.** Adding a vocabulary test for the `SERVER_INSTRUCTIONS` constant is necessary but not sufficient — a future refactor dropping `.with_instructions(SERVER_INSTRUCTIONS)` would silently break discoverability. Always add a wire test that calls `get_info()` on a real server instance and asserts on the returned struct.
+
+- **Doc comments (`///`) are NOT emitted in JSON Schema.** Only `#[schemars(description = "...")]` attributes appear in the `tools/list` response. Several param struct fields had doc comments describing valid values — those are invisible to the LLM. Audit every field: if the description matters for correct tool usage, it must be a schemars attribute.
+
+---
+
 ## Component 10: CI/CD
 
 - **macOS x86_64 cross-compile is fragile.** `macos-latest` is Apple Silicon. Cross-compiling C code (rusqlite bundled SQLite) to x86_64 from ARM requires explicit toolchain configuration. Dropped the target entirely — Intel Mac users can build from source or use Rosetta.

@@ -52,6 +52,9 @@
 | 2026-04-27 | Component 6: Session tools | Coding: sessions.rs (types, validation, business logic), 4 Db trait methods + impls, 4 MCP tools, 24 new tests (139 total passing) | ~25 min |
 | 2026-04-27 | Component 6: Session tools | Code review: 5 personas, 0 Critical/0 High. Low items logged to backlog. | ~15 min |
 | 2026-04-28 | CI maintenance | Upgraded all GitHub Actions to Node.js 24 (checkout v6, rust-cache v2.9.1, upload/download-artifact v7/v8). Fixed cargo fmt divergence between macOS and Linux for sessions.rs, namespaces.rs, db.rs, tools.rs | ~20 min |
+| 2026-04-29 | LLM discoverability Tier 1 | Design review (5 personas, 8 High resolved): verified rmcp API for get_info() override and ToolAnnotations; added v0.1 annotation table and discriminator pairs to design doc | ~45 min |
+| 2026-04-29 | LLM discoverability Tier 1 | Coding (R1–R6): SERVER_INSTRUCTIONS constant, get_info() override, schemars descriptions on ~80 fields, annotations on 29 tools, sibling-discriminator description rewrites, vocab test | ~25 min |
+| 2026-04-29 | LLM discoverability Tier 1 | Code review (5 personas, 1 High resolved): added get_info() wire test; 141 tests passing, cargo check + clippy clean | ~30 min |
 | 2026-04-27 | Component 12: Integration & E2E tests | Implementation + code review + fixes | ~45 min |
 | 2026-04-27 | Component 10: CI/CD | Design + design review + code + code review | ~30 min |
 | 2026-04-27 | Component 11: Installers | Design + design review + code + code review | ~25 min |
