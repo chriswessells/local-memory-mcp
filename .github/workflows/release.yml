@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
 
 jobs:
   build:
@@ -24,6 +24,9 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
             cross: false
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            cross: false
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@stable
@@ -33,6 +36,7 @@ jobs:
         if: matrix.cross
         run: cargo install cross --locked --version 0.2.5
       - name: Build
+        shell: bash
         env:
           USE_CROSS: ${{ matrix.cross }}
           TARGET: ${{ matrix.target }}
@@ -42,17 +46,25 @@ jobs:
           else
             cargo build --release --locked --target "$TARGET"
           fi
-      - name: Package
+      - name: Package (unix)
+        if: runner.os != 'Windows'
         env:
           TARGET: ${{ matrix.target }}
         run: |
           cd "target/$TARGET/release"
           chmod +x local-memory-mcp
           tar czf "../../../local-memory-mcp-$TARGET.tar.gz" local-memory-mcp
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        env:
+          TARGET: ${{ matrix.target }}
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/$env:TARGET/release/local-memory-mcp.exe" -DestinationPath "local-memory-mcp-$env:TARGET.zip"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: local-memory-mcp-${{ matrix.target }}
-          path: local-memory-mcp-${{ matrix.target }}.tar.gz
+          path: local-memory-mcp-${{ matrix.target }}.*
 
   release:
     name: Create Release
@@ -67,11 +79,11 @@ jobs:
           merge-multiple: true
       - name: Verify artifacts
         run: |
-          count=$(ls -1 *.tar.gz 2>/dev/null | wc -l)
+          count=$(ls -1 *.tar.gz *.zip 2>/dev/null | wc -l)
           echo "Found $count artifact(s)"
-          [ "$count" -eq 3 ] || { echo "::error::Expected 3 artifacts, found $count"; exit 1; }
+          [ "$count" -eq 4 ] || { echo "::error::Expected 4 artifacts, found $count"; exit 1; }
       - name: Checksums
-        run: sha256sum *.tar.gz > SHA256SUMS.txt
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS.txt
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,5 +91,5 @@ jobs:
         run: |
           gh release delete "$TAG" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           gh release create "$TAG" --draft --generate-notes --repo "$GITHUB_REPOSITORY"
-          gh release upload "$TAG" *.tar.gz SHA256SUMS.txt --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" *.tar.gz *.zip SHA256SUMS.txt --repo "$GITHUB_REPOSITORY"
           gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"

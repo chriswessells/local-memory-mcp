@@ -190,7 +190,48 @@ local-memory-mcp/
     └── tools.rs                  # MCP tool handlers (MemoryServer, 29 tools)
 ```
 
+## Design Principle: AgentCore Memory Compatibility
+
+An agent with a system prompt should be able to use either AgentCore Memory or local-memory-mcp and not know the difference.
+
+Same conceptual model, same tool semantics, same data lifecycle. The only transparent differences:
+
+- **Extraction is explicit** — The agent calls `memory.create_memory_record` instead of extraction happening automatically
+- **Embeddings are caller-provided** — The agent provides 384-dim vectors; the server stores and indexes them
+- **Store management is additive** — `store.*` tools are a local-only extension
+- **Knowledge graph is additive** — `graph.*` tools are a local-only extension
+
 ## Architecture
+
+### System overview
+
+```
+┌─────────────┐     stdio (JSON-RPC)      ┌──────────────────────────┐
+│   Kiro CLI   │ ◄──────────────────────► │  local-memory-mcp binary │
+└─────────────┘                           │                          │
+                                          │  rmcp (MCP SDK)          │
+                                          │  Memory Engine           │
+                                          │  SQLite + FTS5           │
+                                          │  + sqlite-vec            │
+                                          └──────────┬───────────────┘
+                                                     │
+                                                     ▼
+                                          ~/.local-memory-mcp/
+                                              default.db
+                                              work.db
+                                              ...
+```
+
+| Choice | Rationale |
+|--------|-----------|
+| Rust | Single compiled binary, no runtime deps |
+| SQLite (rusqlite, bundled) | Embedded, single-file, ACID, public domain |
+| FTS5 | BM25 ranking, prefix queries, built into SQLite |
+| sqlite-vec | Embeddable vector similarity search |
+| rmcp | Official Rust MCP SDK |
+| stdio transport | Kiro's native MCP transport |
+
+### Internal layers
 
 All database operations go through the `Db` trait defined in `db.rs`. Downstream modules (`events.rs`, `memories.rs`, `search.rs`, etc.) accept `&dyn Db` and never write raw SQL — all SQL lives in the `impl Db for Connection` block. This keeps the API surface explicit and testable.
 
@@ -245,8 +286,36 @@ Binary releases are triggered by pushing a version tag — **not** by commits to
 
 ```bash
 # To cut a release (maintainers only):
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.0.1
+git push origin v0.2.0.1
 ```
 
-The release workflow cross-compiles for four targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
+The release workflow cross-compiles for four targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc`.
+
+## How This Was Built
+
+This project was developed entirely using a structured, agent-driven process over approximately **20 hours** of wall-clock time, spread across four days. The result is a production-ready Rust MCP server with 29 tools, 153 tests, a cross-platform CI/CD pipeline, and a one-command installer — work that would typically represent several weeks of traditional development effort.
+
+### The development process
+
+Every component followed the same four-phase workflow, with no exceptions:
+
+**1. Design first.** Before writing a single line of code, the agent produced a detailed design document covering data flow, error handling strategy, schema changes, the full API surface, an implementation plan, and a dependency graph of parallel vs. sequential tasks. All design artifacts live in `design/` as version-controlled, reviewable documents.
+
+**2. Multi-perspective design review.** Five specialized review personas — security, architecture, maintainability, reliability, and interoperability — each read the design and produced findings rated Critical, High, Medium, or Low. Every Critical and High finding was resolved before any code was written. Medium and Low items were logged to `agents/TODO.md` as backlog. If the fixes were substantial, the full review panel re-ran against the revised design. The gate was simple: reviewers had to approve the design that would actually be built, not a prior version of it.
+
+**3. Code against the approved design.** The agent implemented the approved design following its own dependency graph, writing tests alongside the code. The build had to stay clean — `cargo check`, `cargo test`, and `cargo clippy -- -D warnings` — throughout.
+
+**4. Code review.** The same five personas reviewed the implementation. All Critical and High findings were fixed before merging to `main`. Every component's architectural decisions were recorded in `agents/ADR.md`, and the retrospective notes in `agents/LESSONS_LEARNED.md` informed the design of the next component.
+
+The tracking files — `agents/TODO.md`, `agents/TIME_LOG.md`, `agents/ADR.md` — meant that any session, with any agent or human, could pick up exactly where the previous one left off without re-deriving context.
+
+### Why this works better than other approaches
+
+**Compared to vibe coding** — Vibe coding is fast to start: describe what you want, accept what the agent produces, iterate until it roughly works. For small scripts and throwaway tools, that's fine. For a project with 12 interdependent components, concurrent read/write paths, multiple search modes, and a security boundary between actors, architecture has to be intentional. Vibe coding produces architecture by accident. Critical issues — actor isolation gaps, SQL injection vectors, data loss on concurrent writes — surface after they're baked in, when they're expensive to fix. This process catches them in the design phase, before they exist in code.
+
+**Compared to developer-directed coding** — In developer-directed coding, the human writes the spec: detailed requirements, interface definitions, maybe pseudocode. The agent fills in the implementation. This is more disciplined than vibe coding, but the human is still the primary reasoning engine — responsible for identifying every failure mode, every edge case, every security implication. The agent is a fast typist. In this process, the agent does the design reasoning too. The developer steers direction, validates quality gates, and makes judgment calls — but the five review personas do the heavy lifting of finding what was missed. The human doesn't need to be an expert in every dimension simultaneously; the personas provide that specialization.
+
+**Compared to tab-complete coding** — Inline completions (Copilot, Cursor) work at the line or function level. The model sees local context and predicts what comes next — excellent for boilerplate, common patterns, and filling in known shapes. But a completion model doesn't know whether the function it's suggesting fits the broader architecture, whether it introduces a new SQL injection surface, or whether it's consistent with the actor-isolation invariant established three files away. It has no design document to check against and no cross-component view. This process works at the component level, with explicit design artifacts that make cross-cutting concerns visible before any implementation begins.
+
+The common thread is that structure creates leverage. A five-minute design review that catches a Critical security finding prevents hours of remediation later. A tracked architectural decision prevents the next session from re-litigating a settled question. Tests written against a reviewed design have a clear target to hit. None of this requires a human to do the review or write the design — but it does require that someone asks for it.
