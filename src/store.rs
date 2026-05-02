@@ -100,7 +100,9 @@ fn has_bad_prefix(p: &Path) -> bool {
 #[cfg(windows)]
 fn has_bad_prefix(p: &Path) -> bool {
     let s = p.to_string_lossy();
-    s.starts_with("\\\\")
+    // Reject UNC network paths (\\server\share) but allow the extended-length
+    // path prefix (\\?\) that std::fs::canonicalize() produces on Windows.
+    s.starts_with("\\\\") && !s.starts_with("\\\\?\\")
 }
 
 #[cfg(not(any(unix, windows)))]
